@@ -151,7 +151,8 @@ they cost real debugging time and are documented so you do not pay for them agai
   assigning to it is silently discarded and the next read shows zeros.
 - **`CloseDoc` closes nothing when given an ambiguous title.** Two parts built into different
   output directories share a title, so the file stays locked and the retry fails blaming the
-  save. Pass the full path.
+  save. Pass the full path. `SwModel.close` does exactly that, and forgets the document only
+  after the close has been issued.
 - **`OpenDoc6` answers `errors=65536` for a file an open document still holds.** Reuse the open
   document instead of reopening it, or close it first.
 
@@ -171,7 +172,7 @@ second run into a clean directory reproduces them and leaves no documents open b
 ## Tests
 
 ```bash
-pytest        # 62 tests, no SolidWorks required
+pytest        # 73 tests, no SolidWorks required
 ```
 
 ## License
