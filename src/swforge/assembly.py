@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .session import SwError, SwModel, _callout, _com, close_document, member
+from .session import SwError, SwModel, SwSession, _callout, _com, member
 
 #: swMateType_e values used by this library.
 MATE_COINCIDENT = 0
@@ -153,11 +153,14 @@ class SwAssembly:
         #: "bolt-1" can never find its component by name afterwards.  Recording
         #: the mapping at insertion time is the only place the two names meet.
         self._instances: dict[str, Component] = {}
-        #: Documents this assembly opened purely so AddComponent5 would accept
-        #: them.  They are closed again with the assembly: inserting four bolts
-        #: off one file opens that file once, but a five-part stack still leaves
-        #: the plate and the bolt loaded for the rest of the session.
-        self._opened: list[Any] = []
+        #: Session whose only job is this assembly's document ledger: every part
+        #: opened so AddComponent5 would accept it is recorded there and closed
+        #: again with the assembly.  Inserting four bolts off one file opens that
+        #: file once, but a five-part stack still leaves the plate and the bolt
+        #: loaded for the rest of the session, so the list has to exist; keeping
+        #: it on a session rather than on the assembly means the library has one
+        #: implementation of "close what I opened" instead of two.
+        self._session: SwSession | None = SwSession(app) if app is not None else None
 
     # -- identity ---------------------------------------------------------
     @property
@@ -190,18 +193,14 @@ class SwAssembly:
         passed its own verification.  generate() closes its documents now, but
         a caller that keeps them open (or a hand-opened file) still hits this.
         """
-        from .session import SwSession
-
-        if self.app is None:
+        if self._session is None:
             raise SwError("the assembly is not bound to a SolidWorks instance")
         target = Path(path).resolve()
         for doc in member(self.app, "GetDocuments", default=()) or ():
             got = str(member(doc, "GetPathName", default=""))
             if got and Path(got).resolve() == target:
                 return doc
-        opened = SwSession(self.app).open_document(target, 1)
-        self._opened.append(target)
-        return opened
+        return self._session.open_document(target, 1)
 
     def add_component(
         self,
@@ -414,9 +413,8 @@ class SwAssembly:
         # The opened parts go first: once the assembly document is closed its
         # model handle is dead, and SwModel(...) over a dead handle raises while
         # looking up .Extension.  Closing by path needs only the application.
-        for target in self._opened:
-            close_document(self.app, target)
-        self._opened.clear()
+        if self._session is not None:
+            self._session.close_opened()
         SwModel(self.model, self.app).close()
 
     def export_step(self, path: str | Path) -> Path:

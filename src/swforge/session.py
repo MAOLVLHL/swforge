@@ -125,6 +125,11 @@ class SwSession:
 
     def __init__(self, app: Any) -> None:
         self.app = app
+        #: Documents this session opened itself, in call order.  Every close path
+        #: in the library ends up needing this list: the assembly used to keep a
+        #: private copy of it, and a caller that forgets to close leaks documents
+        #: into the next run (see SwModel.close() for why that matters).
+        self._opened: list[Path] = []
 
     @classmethod
     def attach(cls, progid: str = "SldWorks.Application") -> "SwSession":
@@ -217,10 +222,32 @@ class SwSession:
                 f"cannot open {target} (errors={errors.value}, "
                 f"warnings={warnings.value})"
             )
+        self._opened.append(Path(target))
         return doc
 
     def open_part(self, path: str | Path) -> "SwModel":
         return SwModel(self.open_document(path, 1), self.app)
+
+    @property
+    def opened(self) -> tuple[Path, ...]:
+        """Paths this session opened, oldest first."""
+        return tuple(self._opened)
+
+    def close_opened(self) -> int:
+        """Close every document this session opened; return how many closed.
+
+        Only the session's own documents are candidates -- a file the user
+        opened by hand never enters the ledger.  The ledger is cleared before the
+        loop, so a path that refuses to close is not retried forever by the next
+        call, and the count lets a caller report what actually happened.
+        """
+        tried = self._opened[:]
+        self._opened.clear()
+        closed = 0
+        for target in tried:
+            if close_document(self.app, target):
+                closed += 1
+        return closed
 
     def activate(self, model: Any) -> Any:
         """Bring *model* to the front and return it.
@@ -307,12 +334,13 @@ def _restore(backup: Path | None, target: Path) -> None:
 class SwModel:
     """One part document, plus the operations this library needs."""
 
-    #: True once close() has run, so callers can tell a live handle from a
-    #: closed document instead of tripping over "-2147221013 document not found".
-    closed: bool = False
-
     def __init__(self, model: Any, app: Any = None) -> None:
         self.model = model
+        #: True once close() has run.  save() and export_step() read it first, so
+        #: a stale handle is reported as such instead of surfacing COM's
+        #: "-2147221013 document not found" from inside the call; close() reads it
+        #: to stay idempotent.
+        self.closed = False
         self.app = app
         self.ext = model.Extension
         self.sm = model.SketchManager
@@ -501,7 +529,13 @@ class SwModel:
         return tuple(round(float(v) * 1000.0, 3) for v in box)
 
     # -- output -----------------------------------------------------------
+    def _require_open(self) -> None:
+        """Refuse to touch a handle whose document has already been closed."""
+        if self.closed:
+            raise SwError(f"document is already closed: {self.title!r}")
+
     def save(self, path: str | Path) -> Path:
+        self._require_open()
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         pythoncom, _ = _com()
@@ -550,7 +584,12 @@ class SwModel:
         Pausing between closes is deliberate.  Closing a batch of documents
         back-to-back crashed this build (ucrtbase 0xc0000409); one at a time
         with a short gap is what the same build survives.
+
+        Closing twice is a no-op: the second call would send CloseDoc a title
+        SolidWorks no longer knows and pay the pause for nothing.
         """
+        if self.closed:
+            return
         title = str(member(self.model, "GetTitle", default=""))
         if not title:
             return
@@ -599,6 +638,7 @@ class SwModel:
         The last two arguments are [out] error counters, so they must be passed
         as by-reference VARIANTs; plain ints raise a type mismatch.
         """
+        self._require_open()
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         pythoncom, _ = _com()
