@@ -165,6 +165,23 @@ def test_mate_defaults_to_the_top_plane():
     assert Mate("a", "b").plane == "\u4e0a\u89c6\u57fa\u51c6\u9762"
 
 
+def test_mate_defaults_to_not_flipped():
+    assert Mate("a", "b", distance_mm=5.0).flip is False
+
+
+def test_flip_survives_the_json_round_trip():
+    mate = Mate("a", "b", distance_mm=5.0, flip=True)
+    assert Mate.from_dict(mate.to_dict()) == mate
+
+
+def test_bolt_stack_flips_every_mate_to_keep_bolts_above_the_plate():
+    # A distance mate constrains magnitude only; without flip the whole stack
+    # resolves under the plate and the envelope grows by one head height while
+    # the volume stays exactly right.
+    spec = bolt_stack()
+    assert all(mate.flip for mate in spec.mates)
+
+
 def test_assembly_spec_is_json_serialisable():
     payload = json.dumps(bolt_stack().to_dict(), ensure_ascii=False)
     assert "bolt_stack" in payload

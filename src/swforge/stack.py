@@ -78,12 +78,20 @@ class Mate:
     added to the part, while "上视基准面@instance@assembly" is stable across
     rebuilds.  A distance mate on the top planes constrains y only, which is
     exactly the degree of freedom a stack needs.
+
+    *flip* picks which side of the second plane the first one is held on.  A
+    distance mate is unsigned, so SolidWorks is free to satisfy it either way;
+    it resolves to the reversed side whenever the components are already at the
+    requested distance when the mate is added.  That is exactly the case here --
+    placements are stated in their final positions before mating -- so a stack
+    that wants the bolt above the plate has to say so.
     """
 
     first: str
     second: str
     plane: str = "上视基准面"
     distance_mm: float = 0.0
+    flip: bool = False
 
     @property
     def kind(self) -> str:
@@ -95,6 +103,7 @@ class Mate:
             "second": self.second,
             "plane": self.plane,
             "distance_mm": self.distance_mm,
+            "flip": self.flip,
         }
 
     @classmethod
@@ -104,6 +113,7 @@ class Mate:
             second=str(data["second"]),
             plane=str(data.get("plane", "上视基准面")),
             distance_mm=float(data.get("distance_mm", 0.0)),
+            flip=bool(data.get("flip", False)),
         )
 
 

@@ -33,3 +33,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# The package lives under src/, so put it on sys.path for the tests without
+# requiring an editable install first.
+pythonpath = ["src"]

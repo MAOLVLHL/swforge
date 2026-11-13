@@ -22,6 +22,7 @@ from __future__ import annotations
 import math
 from contextlib import contextmanager
 from dataclasses import dataclass
+import time
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -242,8 +243,39 @@ class SwSession:
         return active
 
 
+def close_document(app: Any, target: Any) -> bool:
+    """Close the open document saved at *target*, by full path.
+
+    CloseDoc must be given the *full path*, not the title: two documents built
+    into different output directories share a title
+    ("multi_hole_plate_120x80x6.SLDPRT"), and closing by that ambiguous title
+    silently closes nothing at all -- the file stays locked, the retry fails,
+    and the error blames the save instead of the close.
+
+    This is a module-level function so it still works after the caller's own
+    document handle is dead, where constructing SwModel over it would raise
+    while looking up .Extension.
+    """
+    if app is None:
+        return False
+    wanted = Path(target).resolve()
+    for doc in member(app, "GetDocuments", default=()) or ():
+        got = str(member(doc, "GetPathName", default=""))
+        if got and Path(got).resolve() == wanted:
+            try:
+                app.CloseDoc(str(wanted))
+            except Exception:
+                return False
+            return True
+    return False
+
+
 class SwModel:
     """One part document, plus the operations this library needs."""
+
+    #: True once close() has run, so callers can tell a live handle from a
+    #: closed document instead of tripping over "-2147221013 document not found".
+    closed: bool = False
 
     def __init__(self, model: Any, app: Any = None) -> None:
         self.model = model
@@ -461,6 +493,42 @@ class SwModel:
             )
         return target
 
+    def close(self) -> None:
+        """Close this document and leave the rest of the session alone.
+
+        Every finished part used to stay loaded for the life of the session,
+        which is invisible until it is not: one showcase run leaves nineteen
+        documents open (two part sets plus the assembly and its drawing), and
+        the next run adds nineteen more.  SolidWorks gets slow and the user's
+        machine gets hot for nothing -- the file is already written and
+        verified, so holding it open buys nothing.
+
+        Pausing between closes is deliberate.  Closing a batch of documents
+        back-to-back crashed this build (ucrtbase 0xc0000409); one at a time
+        with a short gap is what the same build survives.
+        """
+        title = str(member(self.model, "GetTitle", default=""))
+        if not title:
+            return
+        try:
+            self.model.ClearSelection2(True)
+        except Exception:
+            pass
+        path = str(member(self.model, "GetPathName", default=""))
+        try:
+            if self.app is not None:
+                # Full path first: two documents built into different output
+                # directories share a title, and CloseDoc given an ambiguous
+                # title quietly closes nothing.
+                self.app.CloseDoc(path or title)
+            else:
+                self.model.Close()
+        except Exception:
+            pass
+        # Rebuild the flag so a later save is not fooled by a stale handle.
+        self.closed = True
+        time.sleep(0.25)
+
     def close_document_at(self, target: Path) -> None:
         """Close any open document that was saved to *target*.
 
@@ -468,23 +536,10 @@ class SwModel:
         the previous run's document still holds the .sldprt file open.  Only a
         document whose path matches is closed; the user's own documents are
         never touched.
+
+        Closing is done by full path, for the reason given on close_document().
         """
-        wanted = target.resolve()
-        app = self.app
-        if app is None:
-            return
-        for doc in member(app, "GetDocuments", default=()) or ():
-            try:
-                path = str(member(doc, "GetPathName", default=""))
-            except Exception:
-                continue
-            if path and Path(path).resolve() == wanted:
-                title = str(member(doc, "GetTitle", default=""))
-                if title:
-                    try:
-                        app.CloseDoc(title)
-                    except Exception:
-                        pass
+        close_document(self.app, target)
 
     def _save_as(self, target: Path, errors: Any, warnings: Any) -> bool:
         pythoncom, _ = _com()

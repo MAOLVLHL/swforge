@@ -164,3 +164,14 @@ class SwDrawing:
             if ok and target.exists():
                 return target
         raise SwError(f"PDF export failed: {target}")
+
+    def close(self) -> None:
+        """Close the drawing document once its files are written.
+
+        Same reason as SwModel.close(): a finished drawing is one more loaded
+        document, and it holds its model open through the view references -- so
+        the drawing goes before the model it draws.
+        """
+        from .session import SwModel
+
+        SwModel(self.model, self.app).close()

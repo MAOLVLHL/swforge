@@ -89,8 +89,15 @@ before SolidWorks is asked, and `build_assembly` compares both. Mates are distan
 coincident on a named reference plane:
 
 ```python
-Mate(first="bolt-1", second="plate-1", plane="上视基准面", distance_mm=5.3)
+Mate(first="bolt-1", second="plate-1", plane="上视基准面", distance_mm=5.3, flip=True)
 ```
+
+`flip` is not decoration. A distance mate constrains the *magnitude* only, so SolidWorks picks
+a side — and by default it picks the reversed one. The showcase bolts were mathematically
+placed above the plate, the mate reported success, the volume matched exactly, and the envelope
+came out `120.00 × 50.60 × 80.00` instead of `120.00 × 45.30 × 80.00`: the whole bolt stack had
+been flipped under the plate, one head height deeper than predicted. Volume alone would never
+have caught it, which is why the envelope is checked too.
 
 ## Drawings
 
@@ -133,12 +140,33 @@ they cost real debugging time and are documented so you do not pay for them agai
   `None` raises `类型不匹配`.
 - **`EditRebuild3` is a property here, not a method**, and `dir()` on a COM object throws. Use a
   name-based accessor (`swforge.session.member`).
+- **`GetBodyBox()` on an assembly component answers in *part* coordinates.** All four bolts of
+  the showcase report the same box while sitting in different corners; the pose is in
+  `Transform2`. Unioning the raw boxes inflated the envelope by one whole part width
+  (`127.51` against a predicted `120.00`). `world_box_mm` maps all eight corners through the
+  transform.
+- **`AddComponent5` puts the part's bounding-box *centre* on the point you give it.** Only the
+  vertical term needs a correction, because the placement convention here says y is where the
+  *top face* sits: subtract half the part height. `Transform2` is read-only in practice —
+  assigning to it is silently discarded and the next read shows zeros.
+- **`CloseDoc` closes nothing when given an ambiguous title.** Two parts built into different
+  output directories share a title, so the file stays locked and the retry fails blaming the
+  save. Pass the full path.
+- **`OpenDoc6` answers `errors=65536` for a file an open document still holds.** Reuse the open
+  document instead of reopening it, or close it first.
 
 ## Status
 
-The eight showcase parts were built and verified in SolidWorks 2025 SP3.0 at `err 0.000%` on
-every part. The assembly and drawing paths are implemented and unit-tested at the data level;
-their on-machine runs are pending a machine whose SolidWorks COM registration is healthy.
+Everything below ran on SolidWorks 2025 SP3.0 (build 33.3.0), not in a mock:
+
+| stage | result |
+|---|---|
+| 8 showcase parts | 8/8 pass, every one at `err 0.000%`, box exact to 0.01 mm |
+| bolted assembly | passes: 66455.1 mm³ against 66455.1 predicted, box `120.00 × 45.30 × 80.00`, 4 distance mates |
+| drawing | 4 views, `.slddrw` and `.pdf` written |
+
+`examples/build_showcase.py` is the run that produces those numbers, and it is repeatable: a
+second run into a clean directory reproduces them and leaves no documents open behind it.
 
 ## Tests
 

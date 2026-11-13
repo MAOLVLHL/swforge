@@ -18,8 +18,9 @@ from pathlib import Path
 from typing import Any
 
 from . import parts
-from .assembly import MATE_COINCIDENT, MATE_DISTANCE
+from .assembly import MATE_COINCIDENT, MATE_DISTANCE, world_box_mm
 from .geometry import Solid, relative_error
+from .session import SwModel
 from .spec import PartSpec
 from .stack import AssemblySpec
 
@@ -137,10 +138,52 @@ def generate(
             result.files["step"] = str(model.export_step(stem.with_suffix(".step")))
         return result
     finally:
-        # The document is deliberately left open: closing a batch of documents
-        # in quick succession crashed this SolidWorks build (ucrtbase 0xc0000409),
-        # and an open document costs nothing while the session lives.
-        pass
+        # Close as soon as the files are written.  Leaving documents open is
+        # not free: nineteen of them accumulate over one showcase run and the
+        # next run starts on top of that, which slows SolidWorks and heats the
+        # machine for a document nobody reads again.  SwModel.close() paces the
+        # closes, because closing a batch back-to-back crashed this build.
+        if save_part:
+            model.close()
+
+
+def reuse_part(
+    session: Any,
+    spec: PartSpec,
+    out_dir: str | Path = "build",
+) -> BuildResult | None:
+    """Verify a part that is already on disk instead of building it again.
+
+    Returns None when the file is missing, so the caller can fall back to
+    generate().  A resumed run reads the saved document, measures it and applies
+    exactly the same closed-form check -- the numbers are re-derived, not
+    trusted from a previous run, so a file edited by hand still has to survive.
+    """
+    stem = Path(out_dir) / f"{spec.kind}_{spec.name}"
+    part = stem.with_suffix(".sldprt")
+    if not part.exists():
+        return None
+    expected = parts.analytic(spec.kind, spec.params)
+    model = session.open_part(part)
+    try:
+        measure = model.measure()
+        bbox = model.bbox_mm()
+        result = BuildResult(
+            spec=spec,
+            expected=expected,
+            measured_volume_mm3=measure.volume_mm3,
+            measured_bbox_mm=bbox,
+            volume_error=relative_error(expected.volume_mm3, measure.volume_mm3),
+            bbox_errors=_bbox_errors(expected.bbox_mm, bbox),
+        )
+    finally:
+        model.close()
+    result.files["part"] = str(part)
+    step = stem.with_suffix(".step")
+    if step.exists():
+        result.files["step"] = str(step)
+    result.notes.append("verified from disk, not rebuilt")
+    return result
 
 
 def build_assembly(
@@ -149,18 +192,29 @@ def build_assembly(
     out_dir: str | Path = "build",
     export_step: bool = True,
     save_parts: bool = True,
+    parts_done: dict[str, BuildResult] | None = None,
 ) -> AssemblyResult:
     """Build every part, insert them into an assembly, mate it, then verify.
 
     The parts are written first because AddComponent5 inserts *files*: a
     component cannot carry an in-memory body, so each part has to exist on disk
     before the assembly document refers to it.
+
+    Pass *parts_done* to reuse parts that were already built and verified in
+    this session.  Without it every part is rebuilt into the same directory,
+    which overwrites the file an open document still holds -- correct, but it
+    doubles the SolidWorks work and pays the close-and-retry path for nothing.
     """
     spec.validate()
     out = Path(out_dir)
+    reusable = parts_done or {}
     part_results: dict[str, BuildResult] = {}
 
     for key, part_spec in spec.parts.items():
+        already = reusable.get(key)
+        if already is not None and "part" in already.files:
+            part_results[key] = already
+            continue
         part_results[key] = generate(
             session,
             part_spec,
@@ -178,7 +232,11 @@ def build_assembly(
                 f"instance {placement.instance!r} cannot be inserted"
             )
         assembly.add_component(
-            part_file, placement.x_mm, placement.y_mm, placement.z_mm
+            part_file,
+            placement.x_mm,
+            placement.y_mm,
+            placement.z_mm,
+            instance=placement.instance,
         )
 
     mates: list[str] = []
@@ -193,6 +251,7 @@ def build_assembly(
                 plane=mate.plane,
                 mate_type=kind,
                 distance_mm=mate.distance_mm,
+                flip=mate.flip,
             )
         )
 
@@ -212,33 +271,37 @@ def build_assembly(
     result.files["assembly"] = str(assembly.save(stem.with_suffix(".sldasm")))
     if export_step:
         result.files["step"] = str(assembly.export_step(stem.with_suffix(".step")))
+    # The assembly is on disk and verified; keeping it loaded only piles another
+    # document onto a session that already built every part.
+    assembly.close()
     return result
 
 
 def _assembly_bbox(assembly: Any) -> tuple[float, float, float] | None:
-    """Bounding box of the assembly, taken over its components' bodies."""
+    """Bounding box of the assembly, in assembly coordinates.
+
+    Each component's body box has to be mapped through its own placement before
+    the boxes are unioned.  GetBodyBox() answers in *part* coordinates even when
+    it is asked of an assembly component -- all four bolts of the showcase report
+    the same box while sitting in different corners -- so a naive union adds one
+    whole part width to the envelope.  That is exactly the 127.51 x 45.30 x 86.50
+    this used to report against a predicted 120.00 x 45.30 x 80.00.
+    """
     lows = [float("inf")] * 3
     highs = [float("-inf")] * 3
     found = False
     for comp in assembly.components():
-        for body in _component_bodies(comp.comp):
-            values = [float(v) for v in body.GetBodyBox()]
-            for axis in range(3):
-                lows[axis] = min(lows[axis], values[axis])
-                highs[axis] = max(highs[axis], values[axis + 3])
-            found = True
+        box = world_box_mm(comp)
+        if box is None:
+            continue
+        lo, hi = box
+        for axis in range(3):
+            lows[axis] = min(lows[axis], lo[axis])
+            highs[axis] = max(highs[axis], hi[axis])
+        found = True
     if not found:
         return None
-    return tuple(round((highs[a] - lows[a]) * 1000.0, 3) for a in range(3))
-
-
-def _component_bodies(comp: Any) -> list[Any]:
-    from .session import member
-
-    bodies = member(comp, "GetBodies2", 0, default=None)
-    if bodies is None:
-        bodies = member(comp, "GetBodies2", False, default=None)
-    return list(bodies or ())
+    return tuple(round(highs[a] - lows[a], 3) for a in range(3))
 
 
 def draw(
@@ -290,4 +353,9 @@ def draw(
     files = {"drawing": str(drawing.save(stem.with_suffix(".slddrw")))}
     files["pdf"] = str(drawing.export_pdf(stem.with_suffix(".pdf")))
     files["views"] = ", ".join(placed)
+    # Close the drawing first: it holds the model open through its view
+    # references, so the model goes second.  *model* here is the raw COM
+    # document, so it needs the wrapper before it can be closed.
+    drawing.close()
+    SwModel(model, session.app).close()
     return files

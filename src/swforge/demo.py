@@ -108,6 +108,11 @@ def bolt_stack() -> AssemblySpec:
                 second="plate-1",
                 plane="上视基准面",
                 distance_mm=HEAD_HEIGHT_M8,
+                # The bolt goes *above* the plate.  A distance mate is unsigned
+                # and SolidWorks takes the reversed side by default, which drops
+                # the head through the plate and adds a head height to the
+                # envelope (measured 50.60 instead of 45.30).
+                flip=True,
             )
         )
 
