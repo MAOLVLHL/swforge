@@ -144,6 +144,36 @@ def test_save_keeps_the_previous_file_when_the_retry_fails(
     )
 
 
+def test_close_twice_closes_the_document_once(fake_app, doc_factory):
+    model = SwModel(doc_factory(), fake_app)
+    model.close()
+    model.close()
+    assert len(fake_app.closed) == 1, (
+        "the second CloseDoc would name a title SolidWorks no longer knows and "
+        "pay the 0.25 s pause again; closed has to be read somewhere"
+    )
+
+
+def test_save_on_a_closed_document_names_the_reason(fake_app, doc_factory, tmp_path):
+    model = SwModel(doc_factory(), fake_app)
+    model.close()
+    with pytest.raises(session.SwError, match="already closed"):
+        model.save(tmp_path / "plate.sldprt")
+
+
+def test_session_ledger_closes_only_what_it_opened(fake_app, tmp_path, fake_com):
+    sess = session.SwSession(fake_app)
+    target = tmp_path / "plate.sldprt"
+    sess.open_document(target, 1)
+    assert sess.opened == (Path(str(target)).resolve(),), (
+        "open_document is the only place the ledger can learn about a document"
+    )
+    assert sess.close_opened() == 1
+    assert fake_app.closed == [str(Path(str(target)).resolve())]
+    assert sess.opened == (), "a settled ledger starts empty for the next run"
+    assert sess.close_opened() == 0, "closing twice must not touch CloseDoc again"
+
+
 def test_save_drops_the_backup_when_the_retry_succeeds(
     fake_app, doc_factory, tmp_path, fake_com
 ):

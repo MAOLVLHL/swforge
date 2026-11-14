@@ -7,6 +7,7 @@ these three members by hand is enough to observe what the wrapper actually
 asks SolidWorks to do, on a machine where SolidWorks is not installed.
 """
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -19,20 +20,35 @@ PATH = r"C:\out\a\multi_hole_plate_120x80x6.sldprt"
 
 
 class FakeApp:
-    """The application object, remembering what it was asked to close.
+    """The application object, remembering what it opened and closed.
 
     Every close path in the wrapper ends in CloseDoc, so the recorded argument
     is the observable difference between closing by path and closing by title.
+    GetDocuments is kept honest: closing a document removes it, exactly as
+    SolidWorks does, so a ledger that closes the same file twice shows up.
     """
 
     def __init__(self) -> None:
         self.closed: list[str] = []
+        self.opened: list[str] = []
+        self.docs: list[Any] = []
 
     def CloseDoc(self, what: str) -> None:
         self.closed.append(what)
+        self.docs = [
+            doc
+            for doc in self.docs
+            if str(doc.GetPathName) != what and str(doc.GetTitle) != what
+        ]
 
     def GetDocuments(self) -> tuple[Any, ...]:
-        return ()
+        return tuple(self.docs)
+
+    def OpenDoc6(self, path, doctype, options, arg, errors, warnings):
+        self.opened.append(str(path))
+        doc = make_doc(title=Path(str(path)).name, path=str(path))
+        self.docs.append(doc)
+        return doc
 
 
 def make_doc(title: str = TITLE, path: str = PATH, **overrides: Any):
