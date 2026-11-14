@@ -13,6 +13,7 @@ properties and bounding box SolidWorks reports for the assembly itself.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ from .assembly import MATE_COINCIDENT, MATE_DISTANCE, world_box_mm
 from .geometry import Solid, relative_error
 from .progress import Progress, emit
 from .session import SwError, SwModel
-from .spec import PartSpec
+from .spec import PartSpec, SpecError
 from .stack import AssemblySpec
 
 #: Bounding boxes are compared with this absolute slack, in millimetres.
@@ -30,6 +31,9 @@ BBOX_SLACK_MM = 0.05
 
 #: Prefix for the orientations stored on a model before a drawing refers to them.
 DRAWING_VIEW_NAME = "swforge_iso"
+
+#: The orientations a drawing can place, in the order a sheet reads best.
+DRAWING_VIEW_ORDER = ("front", "top", "right", "iso")
 
 
 @dataclass
@@ -405,11 +409,39 @@ def _assembly_bbox(assembly: Any) -> tuple[float, float, float] | None:
     return tuple(round(highs[a] - lows[a], 3) for a in range(3))
 
 
+def drawing_views(views: Sequence[str]) -> tuple[str, ...]:
+    """Return the orientations to place, or explain which name is not one.
+
+    The view ids are looked up by name, and the name list comes from a
+    comma-separated flag, so a typo used to leave the caller with a KeyError
+    traceback while an empty flag produced a sheet with nothing on it -- and
+    exit code 0 either way.  Checking the names here, before a document is
+    opened, is what turns both into one sentence and exit code 2.
+    """
+    if isinstance(views, str):
+        # The CLI flag is one comma-separated string; splitting it here keeps
+        # the flag's spelling and the names it is checked against in one place.
+        views = views.split(",")
+    wanted = tuple(str(view).strip().lower() for view in views if str(view).strip())
+    for name in wanted:
+        if name not in DRAWING_VIEW_ORDER:
+            raise SpecError(
+                f"unknown drawing view {name!r}; "
+                f"known views: {', '.join(DRAWING_VIEW_ORDER)}"
+            )
+    if not wanted:
+        raise SpecError(
+            "no drawing views to place; pick at least one of "
+            f"{', '.join(DRAWING_VIEW_ORDER)}"
+        )
+    return wanted
+
+
 def draw(
     session: Any,
     model_path: str | Path,
     out_dir: str | Path = "build",
-    views: tuple[str, ...] = ("front", "top", "right", "iso"),
+    views: Sequence[str] = DRAWING_VIEW_ORDER,
     sheet: str | None = None,
     dimensions: bool = True,
 ) -> dict[str, str]:
@@ -424,9 +456,15 @@ def draw(
     AutoDimension only reaches the view SolidWorks holds active -- and that is
     never the view just inserted.  Dimensioning them all after the loop instead
     puts every dimension on the last view and leaves the others empty.
+
+    *views* is checked before any document is opened, so a misspelled
+    orientation is reported as a bad argument rather than as a KeyError from
+    several frames down, and an empty list is refused instead of producing a
+    sheet with nothing on it.
     """
     from .drawing import VIEW_FRONT, VIEW_ISOMETRIC, VIEW_RIGHT, VIEW_TOP
 
+    views = drawing_views(views)
     target = Path(model_path).resolve()
     doctype = 2 if target.suffix.lower() == ".sldasm" else 1
     model = session.open_document(target, doctype)

@@ -472,3 +472,98 @@ def test_an_assembly_with_an_unusable_parameter_is_rejected_before_solidworks(
     err = capsys.readouterr().err
     assert err.startswith(f"error: assembly file {path}: hex_bolt cannot use "), err
 
+# -- draw names its views before it opens SolidWorks ------------------------
+#
+# draw is the one subcommand whose argument is a list of names rather than a
+# file, and it used to hand those names straight to a dictionary lookup: a typo
+# came out as a KeyError traceback, and an empty flag produced a drawing with no
+# views on it and exit code 0.  Both are the kind of mistake the section above
+# is about -- the run never got as far as doing anything -- so both are exit 2
+# with one sentence on stderr.
+
+
+def _fake_draw(monkeypatch, seen, files=None):
+    from swforge import cli
+
+    monkeypatch.setattr(cli, "_attach", lambda: object())
+    monkeypatch.setattr(
+        cli,
+        "draw",
+        lambda session, model, **kwargs: (
+            seen.update(kwargs, model=model)
+            or files
+            or {"drawing": "build/drawing_plate.slddrw", "pdf": "build/drawing_plate.pdf",
+                "views": "Drawing View1", "dimensions": "4"}
+        ),
+    )
+
+
+def test_draw_prints_the_files_it_wrote(monkeypatch, tmp_path, capsys):
+    seen = {}
+    _fake_draw(monkeypatch, seen)
+
+    assert main(["draw", str(tmp_path / "plate.sldprt"), "-o", "out"]) == 0
+
+    out = capsys.readouterr().out
+    assert "drawing: build/drawing_plate.slddrw" in out
+    assert "dimensions: 4" in out
+    assert seen["out_dir"] == "out"
+    assert seen["dimensions"] is True
+
+
+def test_draw_passes_the_view_flag_through_whole(monkeypatch, tmp_path):
+    # The flag is handed to draw() as typed: splitting and validating it in two
+    # places is how the two copies drift, and the check belongs next to the
+    # table of names it checks against.
+    seen = {}
+    _fake_draw(monkeypatch, seen)
+
+    assert main(["draw", str(tmp_path / "plate.sldprt"), "--views", "iso, front"]) == 0
+    assert seen["views"] == "iso, front"
+
+
+def test_no_dimensions_reaches_draw(monkeypatch, tmp_path):
+    seen = {}
+    _fake_draw(monkeypatch, seen)
+
+    assert main(["draw", str(tmp_path / "p.sldprt"), "--no-dimensions"]) == 0
+    assert seen["dimensions"] is False
+
+
+def test_a_misspelled_view_is_one_sentence_and_exit_two(monkeypatch, tmp_path, capsys):
+    # draw itself is not patched: the real one is what rejects the name.  Only
+    # the SolidWorks handle is faked, and the model path is a file that does not
+    # exist -- so if the check ever moved below open_document, this test would
+    # fail with a different error instead of passing.
+    from swforge import cli
+
+    monkeypatch.setattr(cli, "_attach", lambda: object())
+
+    path = tmp_path / "plate.sldprt"
+    assert main(["draw", str(path), "--views", "frnt"]) == 2
+    captured = capsys.readouterr()
+    assert captured.err == (
+        "error: unknown drawing view 'frnt'; known views: front, top, right, iso\n"
+    ), captured.err
+    assert captured.out == "", "no file was written, so nothing goes to stdout"
+
+
+def test_an_empty_view_flag_is_exit_two_not_an_empty_sheet(monkeypatch, tmp_path, capsys):
+    from swforge import cli
+
+    monkeypatch.setattr(cli, "_attach", lambda: object())
+
+    path = tmp_path / "plate.sldprt"
+    assert main(["draw", str(path), "--views", ""]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error: no drawing views to place; pick at least one of "), err
+
+
+def test_draw_without_solidworks_is_exit_two(monkeypatch, capsys):
+    from swforge import cli
+
+    monkeypatch.setattr(cli, "_attach", lambda: None)
+
+    assert main(["draw", "plate.sldprt"]) == 2
+
+

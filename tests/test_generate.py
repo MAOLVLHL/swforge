@@ -514,6 +514,72 @@ def test_draw_can_leave_the_views_unannotated(tmp_path, monkeypatch):
     assert drawing.dimensioned == [], "--no-dimensions must not dimension"
     assert files["dimensions"] == "0"
 
+# -- the view names are checked before anything is opened -------------------
+#
+# draw() looks each orientation up in a table, and the names arrive from a
+# comma-separated flag, so a typo is a user error that has to leave as a
+# SpecError -- one sentence, exit code 2.  Before this check existed the typo
+# surfaced as a KeyError traceback from four frames down and an empty flag
+# produced a drawing with no views on it at all.
+
+
+def test_a_misspelled_view_names_the_views_that_exist():
+    from swforge import generate
+    from swforge.spec import SpecError
+
+    with pytest.raises(SpecError) as error:
+        generate.drawing_views(["frnt"])
+
+    message = str(error.value)
+    assert "unknown drawing view 'frnt'" in message, message
+    assert "known views: front, top, right, iso" in message, message
+
+
+def test_the_view_flag_is_one_comma_separated_string():
+    from swforge import generate
+
+    assert generate.drawing_views("iso, front") == ("iso", "front")
+
+
+def test_an_empty_view_flag_is_refused_rather_than_drawing_a_blank_sheet():
+    from swforge import generate
+    from swforge.spec import SpecError
+
+    with pytest.raises(SpecError) as error:
+        generate.drawing_views("  ,  ,")
+
+    assert "no drawing views to place" in str(error.value), str(error.value)
+
+
+def test_view_names_are_case_insensitive_and_repeatable():
+    from swforge import generate
+
+    assert generate.drawing_views(["TOP", " Top "]) == ("top", "top")
+
+
+def test_draw_refuses_a_bad_view_before_it_opens_the_model(tmp_path, monkeypatch):
+    from swforge import generate
+    from swforge.spec import SpecError
+
+    opened = []
+
+    def fake_open(path, doctype):
+        opened.append(path)
+        raise AssertionError("the model must not be opened for a bad view name")
+
+    session = SimpleNamespace(
+        open_document=fake_open,
+        activate=lambda model: None,
+        new_drawing=lambda sheet=None: None,
+        app=None,
+    )
+
+    with pytest.raises(SpecError):
+        generate.draw(session, tmp_path / "plate.sldprt", views=["frnt"])
+
+    assert opened == [], "nothing was opened, so no document is left half made"
+
+
 
 def test_a_missing_part_is_not_an_error_and_says_nothing(tmp_path):
     """None is the signal to build it; a resumed run must not report a stage for it."""
