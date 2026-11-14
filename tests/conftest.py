@@ -12,6 +12,8 @@ from typing import Any
 
 import pytest
 
+import fakecom
+
 TITLE = "multi_hole_plate_120x80x6.SLDPRT"
 PATH = r"C:\out\a\multi_hole_plate_120x80x6.sldprt"
 
@@ -65,3 +67,15 @@ def fake_doc():
 def doc_factory():
     """Build documents with one member swapped out, e.g. an unsaved one."""
     return make_doc
+
+
+@pytest.fixture
+def fake_com(monkeypatch):
+    """pywin32's import surface, so save() runs where it is not installed.
+
+    The wrapper imports pythoncom lazily inside the functions that build a
+    VARIANT, so shadowing the modules covers exactly the same code a Windows
+    host would run.  Without this the save paths are unreachable on the Linux
+    runners and the retry logic is never exercised there.
+    """
+    fakecom.install(monkeypatch)
