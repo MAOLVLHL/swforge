@@ -20,7 +20,7 @@ from typing import Any
 from . import parts
 from .assembly import MATE_COINCIDENT, MATE_DISTANCE, world_box_mm
 from .geometry import Solid, relative_error
-from .session import SwModel
+from .session import SwError, SwModel
 from .spec import PartSpec
 from .stack import AssemblySpec
 
@@ -71,9 +71,15 @@ class AssemblyResult:
     mates: list[str] = field(default_factory=list)
     files: dict[str, str] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    #: Part key -> the exception that stopped it.  A failed part is data, not an
+    #: abort: the other parts are still built and the assembly still gets made
+    #: from what survived, so one bad washer does not cost the whole run.
+    failures: dict[str, str] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
+        if self.failures:
+            return False
         if self.volume_error > self.spec.tolerance:
             return False
         return all(error <= 1e-6 for error in self.bbox_errors.values())
@@ -82,12 +88,14 @@ class AssemblyResult:
         status = "PASS" if self.ok else "FAIL"
         bbox = self.measured_bbox_mm
         bbox_text = "x".join(f"{v:.2f}" for v in bbox) if bbox else "no body"
+        tail = f", {len(self.mates)} mates"
+        if self.failures:
+            tail += f", {len(self.failures)} failed"
         return (
             f"[{status}] assembly/{self.spec.name}: "
             f"volume {self.measured_volume_mm3:.1f} mm3 "
             f"(expected {self.expected.volume_mm3:.1f}, "
-            f"err {self.volume_error * 100:.3f}%), bbox {bbox_text}, "
-            f"{len(self.mates)} mates"
+            f"err {self.volume_error * 100:.3f}%), bbox {bbox_text}{tail}"
         )
 
 
@@ -204,33 +212,65 @@ def build_assembly(
     this session.  Without it every part is rebuilt into the same directory,
     which overwrites the file an open document still holds -- correct, but it
     doubles the SolidWorks work and pays the close-and-retry path for nothing.
+
+    A part that fails is recorded in *failures* and skipped, not raised: a batch
+    that loses one washer should still finish the other nine parts and still
+    mate what survived.  Only when *every* part fails is there nothing left to
+    assemble, and then the result says so instead of opening an empty document.
     """
     spec.validate()
     out = Path(out_dir)
     reusable = parts_done or {}
     part_results: dict[str, BuildResult] = {}
+    failures: dict[str, str] = {}
+    notes: list[str] = []
+    expected = spec.predict()
 
     for key, part_spec in spec.parts.items():
         already = reusable.get(key)
         if already is not None and "part" in already.files:
             part_results[key] = already
             continue
-        part_results[key] = generate(
-            session,
-            part_spec,
-            out_dir=out,
-            export_step=export_step,
-            save_part=save_parts,
+        try:
+            part_results[key] = generate(
+                session,
+                part_spec,
+                out_dir=out,
+                export_step=export_step,
+                save_part=save_parts,
+            )
+        except Exception as error:  # noqa: BLE001 - isolating it is the point
+            failures[key] = f"{type(error).__name__}: {error}"
+            notes.append(f"part {key!r} failed: {failures[key]}")
+
+    if not part_results:
+        # Every part failed, so there is nothing to insert and no reason to ask
+        # SolidWorks for an empty assembly: report what went wrong instead.
+        notes.append("no part was built, so no assembly was created")
+        return AssemblyResult(
+            spec=spec,
+            expected=expected,
+            measured_volume_mm3=0.0,
+            measured_bbox_mm=None,
+            volume_error=float("inf"),
+            bbox_errors=_bbox_errors(expected.bbox_mm, None),
+            notes=notes,
+            failures=failures,
         )
 
     assembly = session.new_assembly()
     for placement in spec.placements:
-        part_file = part_results[placement.part].files.get("part")
+        done = part_results.get(placement.part)
+        part_file = done.files.get("part") if done is not None else None
         if not part_file:
-            raise RuntimeError(
-                f"part {placement.part!r} was not written to disk, so "
-                f"instance {placement.instance!r} cannot be inserted"
+            reason = (
+                "failed to build" if placement.part in failures else "was not written to disk"
             )
+            notes.append(
+                f"instance {placement.instance!r} skipped: part "
+                f"{placement.part!r} {reason}"
+            )
+            continue
         assembly.add_component(
             part_file,
             placement.x_mm,
@@ -241,8 +281,14 @@ def build_assembly(
 
     mates: list[str] = []
     for mate in spec.mates:
-        first = assembly.find(mate.first)
-        second = assembly.find(mate.second)
+        try:
+            first = assembly.find(mate.first)
+            second = assembly.find(mate.second)
+        except SwError as error:
+            # A mate needs both components present; losing one part must not
+            # cost the mates that do not mention it.
+            notes.append(f"mate {mate.first!r}-{mate.second!r} skipped: {error}")
+            continue
         kind = MATE_COINCIDENT if mate.kind == "coincident" else MATE_DISTANCE
         mates.append(
             assembly.mate_planes(
@@ -255,9 +301,14 @@ def build_assembly(
             )
         )
 
-    volume_mm3, _ = assembly.measure()
-    bbox = _assembly_bbox(assembly)
-    expected = spec.predict()
+    volume_mm3, bbox = 0.0, None
+    try:
+        volume_mm3, _ = assembly.measure()
+        bbox = _assembly_bbox(assembly)
+    except Exception as error:  # noqa: BLE001 - report, do not lose the parts
+        failures["<assembly>"] = f"{type(error).__name__}: {error}"
+        notes.append(f"assembly measurement failed: {failures['<assembly>']}")
+
     result = AssemblyResult(
         spec=spec,
         expected=expected,
@@ -266,14 +317,21 @@ def build_assembly(
         volume_error=relative_error(expected.volume_mm3, volume_mm3),
         bbox_errors=_bbox_errors(expected.bbox_mm, bbox),
         mates=mates,
+        notes=notes,
+        failures=failures,
     )
     stem = out / f"assembly_{spec.name}"
-    result.files["assembly"] = str(assembly.save(stem.with_suffix(".sldasm")))
-    if export_step:
-        result.files["step"] = str(assembly.export_step(stem.with_suffix(".step")))
-    # The assembly is on disk and verified; keeping it loaded only piles another
-    # document onto a session that already built every part.
-    assembly.close()
+    try:
+        result.files["assembly"] = str(assembly.save(stem.with_suffix(".sldasm")))
+        if export_step:
+            result.files["step"] = str(assembly.export_step(stem.with_suffix(".step")))
+    except Exception as error:  # noqa: BLE001 - the parts are still on disk
+        failures["<assembly>"] = f"{type(error).__name__}: {error}"
+        notes.append(f"assembly save failed: {failures['<assembly>']}")
+    finally:
+        # The assembly is on disk and verified; keeping it loaded only piles
+        # another document onto a session that already built every part.
+        assembly.close()
     return result
 
 
