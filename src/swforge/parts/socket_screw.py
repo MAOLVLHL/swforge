@@ -10,6 +10,13 @@ from typing import Any
 
 from .. import catalog
 from ..geometry import Solid, cylinder, hex_prism
+from ..params import Param
+
+#: Read by analytic() and build(); the length is free-form, the head is not.
+PARAMS = (
+    Param("size", choices=tuple(catalog.SOCKET_SCREWS)),
+    Param("length"),
+)
 
 
 def analytic(params: dict[str, Any]) -> Solid:
