@@ -38,6 +38,7 @@ Importing the package never touches COM, so `swforge.parts`, `swforge.geometry` 
 
 ```bash
 swforge catalog                 # print the built-in GB dimension tables
+swforge kinds                   # list the part kinds and what each one is
 swforge demo showcase.json      # write the eight-part showcase spec
 swforge verify showcase.json    # analytic answers only — no SolidWorks needed
 swforge build  showcase.json -o build
@@ -73,7 +74,9 @@ continues, because a broken progress bar must not destroy the work it is reporti
 ## Parts
 
 Eight kinds ship today. Four are GB standard fasteners driven by catalogue tables, four are
-simple non-standard parts driven by user dimensions.
+simple non-standard parts driven by user dimensions. `swforge kinds` prints the list, and
+`swforge.parts.schema()` returns it as data for anything that wants to build a form or a
+validator over it.
 
 | kind | params | analytic volume (showcase) |
 |---|---|---|
@@ -89,6 +92,10 @@ simple non-standard parts driven by user dimensions.
 Catalogue tables cover M6–M20 for GB/T 5783 (hex bolts), GB/T 6170 (hex nuts),
 GB/T 97.1 (plain washers) and GB/T 70.1 (socket head cap screws), at maximum material
 condition.
+
+The list of kinds has exactly one home, `swforge.kinds`, and `swforge.parts` refuses to
+import if it registers a different set — a kind promised by the type annotation and missing
+from the registry should be an ImportError at build time, not a KeyError for the first user.
 
 ## Assemblies
 

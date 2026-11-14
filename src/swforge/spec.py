@@ -5,25 +5,9 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-PartKind = Literal[
-    "hex_bolt",
-    "hex_nut",
-    "washer",
-    "socket_screw",
-    "l_bracket",
-    "multi_hole_plate",
-    "stepped_shaft",
-    "flange",
-]
-
-STANDARD_KINDS: frozenset[str] = frozenset(
-    {"hex_bolt", "hex_nut", "washer", "socket_screw"}
-)
-NON_STANDARD_KINDS: frozenset[str] = frozenset(
-    {"l_bracket", "multi_hole_plate", "stepped_shaft", "flange"}
-)
+from .kinds import PartKind
 
 
 @dataclass
