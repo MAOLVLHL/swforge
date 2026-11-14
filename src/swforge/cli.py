@@ -1,4 +1,4 @@
-"""Command line entry point: swforge catalog | demo | stack | build | assemble | draw | verify."""
+"""Command line entry point: swforge catalog | kinds | demo | stack | build | assemble | draw | verify."""
 
 from __future__ import annotations
 
@@ -23,6 +23,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("catalog", help="print the built-in GB dimension tables")
+
+    sub.add_parser("kinds", help="list the part kinds and what each one is")
 
     demo = sub.add_parser("demo", help="write the showcase part spec file")
     demo.add_argument("path", nargs="?", default="showcase.json")
@@ -150,6 +152,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "catalog":
         print(catalog.summary())
+        return 0
+
+    if args.command == "kinds":
+        for row in parts.schema():
+            tag = "standard" if row["standard"] else "custom  "
+            print(f"{row['kind']:<17} {tag}  {row['summary']}")
         return 0
 
     if args.command == "demo":
