@@ -20,6 +20,7 @@ from typing import Any
 from . import parts
 from .assembly import MATE_COINCIDENT, MATE_DISTANCE, world_box_mm
 from .geometry import Solid, relative_error
+from .progress import Progress, emit
 from .session import SwError, SwModel
 from .spec import PartSpec
 from .stack import AssemblySpec
@@ -118,13 +119,19 @@ def generate(
     out_dir: str | Path = "build",
     export_step: bool = True,
     save_part: bool = True,
+    on_progress: Progress | None = None,
 ) -> BuildResult:
     """Build one part, verify it, and write .sldprt/.step files.
 
     Raises ValueError before touching SolidWorks when the parameters are
     invalid, so a bad spec never leaves a half-built document behind.
+
+    *on_progress* receives "part.building", "part.built" and "part.saved" as the
+    build moves; a caller that shows a progress bar or a log line needs those
+    three to tell a slow build from a stuck one.
     """
     expected = parts.analytic(spec.kind, spec.params)
+    emit(on_progress, "part.building", kind=spec.kind, name=spec.name)
 
     model = session.new_part()
     try:
@@ -139,11 +146,20 @@ def generate(
             volume_error=relative_error(expected.volume_mm3, measure.volume_mm3),
             bbox_errors=_bbox_errors(expected.bbox_mm, bbox),
         )
+        emit(
+            on_progress,
+            "part.built",
+            kind=spec.kind,
+            name=spec.name,
+            volume_mm3=round(measure.volume_mm3, 3),
+            ok=result.ok,
+        )
         stem = Path(out_dir) / f"{spec.kind}_{spec.name}"
         if save_part:
             result.files["part"] = str(model.save(stem.with_suffix(".sldprt")))
         if export_step:
             result.files["step"] = str(model.export_step(stem.with_suffix(".step")))
+        emit(on_progress, "part.saved", kind=spec.kind, name=spec.name, files=len(result.files))
         return result
     finally:
         # Close as soon as the files are written.  Leaving documents open is
@@ -201,6 +217,7 @@ def build_assembly(
     export_step: bool = True,
     save_parts: bool = True,
     parts_done: dict[str, BuildResult] | None = None,
+    on_progress: Progress | None = None,
 ) -> AssemblyResult:
     """Build every part, insert them into an assembly, mate it, then verify.
 
@@ -217,6 +234,13 @@ def build_assembly(
     that loses one washer should still finish the other nine parts and still
     mate what survived.  Only when *every* part fails is there nothing left to
     assemble, and then the result says so instead of opening an empty document.
+
+    *on_progress* gets the part events from each nested build, plus one event
+    per assembly phase: "assembly.parts", "assembly.inserting",
+    "assembly.mating", "assembly.saving" and "assembly.closed".  A ten-part
+    assembly spends most of its wall clock inside this function, so a caller
+    that only hears about parts sees nothing at all between the last part and
+    the final file.
     """
     spec.validate()
     out = Path(out_dir)
@@ -238,10 +262,13 @@ def build_assembly(
                 out_dir=out,
                 export_step=export_step,
                 save_part=save_parts,
+                on_progress=on_progress,
             )
         except Exception as error:  # noqa: BLE001 - isolating it is the point
             failures[key] = f"{type(error).__name__}: {error}"
             notes.append(f"part {key!r} failed: {failures[key]}")
+
+    emit(on_progress, "assembly.parts", built=len(part_results), failed=len(failures))
 
     if not part_results:
         # Every part failed, so there is nothing to insert and no reason to ask
@@ -259,6 +286,7 @@ def build_assembly(
         )
 
     assembly = session.new_assembly()
+    emit(on_progress, "assembly.inserting", components=len(spec.placements))
     for placement in spec.placements:
         done = part_results.get(placement.part)
         part_file = done.files.get("part") if done is not None else None
@@ -280,6 +308,7 @@ def build_assembly(
         )
 
     mates: list[str] = []
+    emit(on_progress, "assembly.mating", mates=len(spec.mates))
     for mate in spec.mates:
         try:
             first = assembly.find(mate.first)
@@ -321,6 +350,7 @@ def build_assembly(
         failures=failures,
     )
     stem = out / f"assembly_{spec.name}"
+    emit(on_progress, "assembly.saving", name=spec.name)
     try:
         result.files["assembly"] = str(assembly.save(stem.with_suffix(".sldasm")))
         if export_step:
@@ -332,6 +362,7 @@ def build_assembly(
         # The assembly is on disk and verified; keeping it loaded only piles
         # another document onto a session that already built every part.
         assembly.close()
+        emit(on_progress, "assembly.closed", name=spec.name, files=len(result.files))
     return result
 
 

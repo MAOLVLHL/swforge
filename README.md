@@ -46,6 +46,30 @@ swforge build  showcase.json -o build
 `build` attaches to the running SolidWorks, builds each part, compares against the analytic
 answer, and writes `.sldprt` + `.step`. Exit code is non-zero if any part disagrees.
 
+A run of eight parts takes minutes, so `build` and `assemble` accept `-v` to log every stage to
+stderr as it starts:
+
+```
+15:04:12  part.building kind=hex_bolt name=M8x40
+15:04:19  part.built kind=hex_bolt name=M8x40 volume_mm3=2786.34 ok=True
+15:04:19  part.saved kind=hex_bolt name=M8x40 files=2
+```
+
+The same events reach a caller that wants to draw its own progress bar:
+
+```python
+from swforge.generate import build_assembly
+
+result = build_assembly(
+    session, spec, on_progress=lambda stage, payload: bar.update(stage, payload)
+)
+```
+
+Stages are `part.building`, `part.built`, `part.saved`, then `assembly.parts`,
+`assembly.inserting`, `assembly.mating`, `assembly.saving`, `assembly.closed`. The library itself
+never prints and never configures logging — a callback that raises is logged and the build
+continues, because a broken progress bar must not destroy the work it is reporting on.
+
 ## Parts
 
 Eight kinds ship today. Four are GB standard fasteners driven by catalogue tables, four are
@@ -172,7 +196,7 @@ second run into a clean directory reproduces them and leaves no documents open b
 ## Tests
 
 ```bash
-pytest        # 73 tests, no SolidWorks required
+pytest        # 125 tests, no SolidWorks required
 ```
 
 ## License

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -34,12 +35,24 @@ def _build_parser() -> argparse.ArgumentParser:
     build.add_argument("-o", "--out", default="build", help="output directory")
     build.add_argument("--no-step", action="store_true", help="skip STEP export")
     build.add_argument("--dry-run", action="store_true", help="only print the plan")
+    build.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="log each build stage as it starts (to stderr)",
+    )
 
     assemble = sub.add_parser("assemble", help="build parts, mate them, verify")
     assemble.add_argument("spec", help="JSON assembly spec file")
     assemble.add_argument("-o", "--out", default="build", help="output directory")
     assemble.add_argument("--no-step", action="store_true", help="skip STEP export")
     assemble.add_argument("--dry-run", action="store_true", help="only print the plan")
+    assemble.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="log each build stage as it starts (to stderr)",
+    )
 
     drawing = sub.add_parser("draw", help="draw standard views of a built model")
     drawing.add_argument("model", help="path to a .sldprt or .sldasm")
@@ -59,6 +72,23 @@ def _build_parser() -> argparse.ArgumentParser:
         "--assembly", action="store_true", help="treat the file as an assembly spec"
     )
     return parser
+
+
+def _log_stages() -> None:
+    """Send the library's stage events to stderr, one line per event.
+
+    The library never configures logging and never prints -- that is the
+    application's job -- so *this* is where a person who ran "swforge build -v"
+    gets to watch a five-minute assembly instead of a silent terminal.
+    """
+    logger = logging.getLogger("swforge")
+    already = any(getattr(h, "_swforge_cli", False) for h in logger.handlers)
+    if not already:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter("%(asctime)s  %(message)s", "%H:%M:%S"))
+        handler._swforge_cli = True  # type: ignore[attr-defined]
+        logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 
 def _print_plan(specs: Sequence[PartSpec]) -> None:
@@ -143,6 +173,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "assemble":
+        if args.verbose:
+            _log_stages()
         assembly = load_assembly(args.spec)
         print("\n".join(assembly.summary()))
         if args.dry_run:
@@ -175,6 +207,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"{key}: {value}")
         return 0
 
+    if args.verbose:
+        _log_stages()
     specs = load_specs(args.spec)
     _print_plan(specs)
     if args.dry_run:

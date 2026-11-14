@@ -86,3 +86,67 @@ def test_one_bad_spec_does_not_stop_the_batch(monkeypatch, tmp_path, capsys):
     assert "[FAIL] hex_bolt/b: SwError: no drawing template" in out
     assert "[PASS] plate/c" in out
     assert "2/3 parts verified" in out
+
+
+def test_verbose_sends_stage_events_to_stderr_and_not_to_stdout(tmp_path, capsys):
+    """A person watching a five-minute build needs the stages on stderr."""
+    import logging
+
+    from swforge.progress import emit
+
+    logger = logging.getLogger("swforge")
+    before = list(logger.handlers)
+    path = tmp_path / "showcase.json"
+    dump_specs(showcase(), path)
+    try:
+        assert main(["build", str(path), "--dry-run", "-v"]) == 0
+        emit(None, "part.building", kind="washer")
+        captured = capsys.readouterr()
+    finally:
+        for handler in list(logger.handlers):
+            if handler not in before:
+                logger.removeHandler(handler)
+        logger.setLevel(logging.NOTSET)
+
+    assert "part.building kind=washer" in captured.err, (
+        "progress belongs on stderr so that piping stdout still yields the report"
+    )
+    assert "part.building" not in captured.out
+
+
+def test_without_verbose_the_stage_events_stay_silent(tmp_path, capsys):
+    import logging
+
+    from swforge.progress import emit
+
+    logger = logging.getLogger("swforge")
+    path = tmp_path / "showcase.json"
+    dump_specs(showcase(), path)
+    assert main(["build", str(path), "--dry-run"]) == 0
+    emit(None, "part.building", kind="washer")
+    captured = capsys.readouterr()
+
+    assert "part.building" not in captured.err
+    assert logger.handlers == [], (
+        "a run without -v must not leave a handler attached to the shared logger"
+    )
+
+
+def test_asking_for_verbose_twice_leaves_one_handler(tmp_path, capsys):
+    """main() is called again in the same process by tests, notebooks, embedders."""
+    import logging
+
+    logger = logging.getLogger("swforge")
+    path = tmp_path / "showcase.json"
+    dump_specs(showcase(), path)
+    try:
+        main(["build", str(path), "--dry-run", "-v"])
+        main(["build", str(path), "--dry-run", "-v"])
+        ours = [h for h in logger.handlers if getattr(h, "_swforge_cli", False)]
+    finally:
+        for handler in list(logger.handlers):
+            if getattr(handler, "_swforge_cli", False):
+                logger.removeHandler(handler)
+        logger.setLevel(logging.NOTSET)
+
+    assert len(ours) == 1, "two runs must not print every event twice"
