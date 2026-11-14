@@ -215,6 +215,22 @@ swforge draw build/bolt_stack.sldasm -o build --views front,top,right,iso
 Opens the model, names a view per orientation, then places each named view on a new sheet from
 the SolidWorks default drawing template, and exports both `.slddrw` and `.pdf`.
 
+Every view is dimensioned as it is placed, so the sheet you get back is annotated rather than
+blank: on the `flange_DN50` part that is 4 dimensions on the front view, 7 on the top, 4 on the
+right and 6 on the isometric, including the `4 X` callout on the bolt holes. Pass
+`--no-dimensions` to place the views bare, and read the count from the last line of output:
+
+```bash
+swforge draw build/flange_DN50.sldprt -o build --no-dimensions   # views only
+```
+
+```
+drawing: build/drawing_flange_DN50.slddrw
+pdf: build/drawing_flange_DN50.pdf
+views: Drawing View1, Drawing View2, Drawing View3, Drawing View4
+dimensions: 21
+```
+
 ## Coordinate convention
 
 Parts are modelled with their axis along **−Y**: the profile sketch lives on the Top plane (XZ)
@@ -243,6 +259,20 @@ they cost real debugging time and are documented so you do not pay for them agai
 - **`CreateDrawViewFromModelView3` only works with a view name that exists on the model.**
   `"*Front"` and `"Front"` both return `None`; call `ShowNamedView2` + `NameView` on the model
   first, then reference that name.
+- **`InsertModelAnnotations3` imports nothing from a model that was never dimensioned by
+  hand.** It answers `None` and leaves every view at `GetDisplayDimensionCount() == 0`, whatever
+  the options argument — `0`, `8` and `32776` were all measured. Models built by this library
+  dimension their sketches through geometry, not through sketch dimensions, so there is nothing
+  for the import to bring over. Drawing-level `AutoDimension` is what fills a sheet.
+- **`AutoDimension` dimensions the active view, and a view you just inserted is not active.**
+  Calling `ActivateView` on all four views after the fact does not help: it answers `True` and
+  `ActiveDrawingView` names the right view, but every dimension still lands on the last view
+  created (front/top/right 0, iso 9, measured). Create one view, dimension it, then create the
+  next. It also returns `1` on success, not the documented `swAutodimStatusSuccess` of `0`.
+- **`ActivateView` and `CreateDrawViewFromModelView3` want different names.** The latter takes
+  the orientation stored with `NameView` (`swforge_front`); the former only answers to the name
+  SolidWorks assigned the view on the sheet (`Drawing View1`). Use `view.Name` from
+  `CreateDrawViewFromModelView3`, which is what `SwDrawing.add_named_view` returns.
 - **`Extension.SaveAs` needs an empty-dispatch `VARIANT` for its ExportData argument.** Passing
   `None` raises `类型不匹配`.
 - **`EditRebuild3` is a property here, not a method**, and `dir()` on a COM object throws. Use a
@@ -292,7 +322,7 @@ Everything below ran on SolidWorks 2025 SP3.0 (build 33.3.0), not in a mock:
 |---|---|
 | 8 showcase parts | 8/8 pass, every one at `err 0.000%`, box exact to 0.01 mm |
 | bolted assembly | passes: 66455.1 mm³ against 66455.1 predicted, box `120.00 × 45.30 × 80.00`, 4 distance mates |
-| drawing | 4 views, `.slddrw` and `.pdf` written |
+| drawing | 4 views, 21 auto-dimensions, `.slddrw` and `.pdf` written |
 
 `examples/build_showcase.py` is the run that produces those numbers, and it is repeatable: a
 second run into a clean directory reproduces them and leaves no documents open behind it.
@@ -300,7 +330,7 @@ second run into a clean directory reproduces them and leaves no documents open b
 ## Tests
 
 ```bash
-pytest        # 177 tests, no SolidWorks required
+pytest        # 183 tests, no SolidWorks required
 ```
 
 ## License

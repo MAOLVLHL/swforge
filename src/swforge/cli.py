@@ -77,6 +77,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default="front,top,right,iso",
         help="comma-separated subset of front,top,right,iso",
     )
+    drawing.add_argument(
+        "--no-dimensions",
+        action="store_true",
+        help="leave the views unannotated (default: auto-dimension each view)",
+    )
 
     verify = sub.add_parser("verify", help="check analytic answers without SolidWorks")
     verify.add_argument("spec", help="JSON file with one part spec or a list")
@@ -344,7 +349,12 @@ def _run(args: argparse.Namespace) -> int:
             return ARG_ERROR
         views = tuple(v.strip() for v in args.views.split(",") if v.strip())
         files = draw(
-            session, args.model, out_dir=args.out, views=views, sheet=args.sheet
+            session,
+            args.model,
+            out_dir=args.out,
+            views=views,
+            sheet=args.sheet,
+            dimensions=not args.no_dimensions,
         )
         for key, value in files.items():
             print(f"{key}: {value}")

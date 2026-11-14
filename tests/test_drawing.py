@@ -12,14 +12,18 @@ MODEL = r"C:\out\plate.sldprt"
 
 
 class FakeView:
-    def __init__(self, name: str = "Drawing View1", scale=(1.0, 2.0)):
+    def __init__(self, name: str = "Drawing View1", scale=(1.0, 2.0), dimensions=0):
         self.Name = name
         self._scale = scale
+        self.dimensions = dimensions
         self.ratio_calls = 0
 
     def ScaleRatio(self):  # the COM member is a method, not a property
         self.ratio_calls += 1
         return self._scale
+
+    def GetDisplayDimensionCount(self):  # also a method, not a property
+        return self.dimensions
 
 
 class FakeSheet:
@@ -36,7 +40,7 @@ class FakeSheet:
 
 
 class FakeDrawingModel:
-    def __init__(self, sheet=None, created=(), named=None):
+    def __init__(self, sheet=None, created=(), named=None, gain=3):
         self.Extension = SimpleNamespace(
             SaveAs=self._save_as,
             ExportData=self._export_data,
@@ -47,7 +51,13 @@ class FakeDrawingModel:
         self.saved: list[str] = []
         self.exported: list[str] = []
         self.save_ok = True
-        self.inserted = None
+        # AutoDimension only ever touches the *active* view, so the fake has to
+        # keep one; *gain* is how many dimensions a call invents.
+        self.gain = gain
+        self.activated: list[str] = []
+        self.autodim_args: list[tuple] = []
+        self.active = None
+        self.activate_ok = True
 
     def GetCurrentSheet(self):
         return self.sheet
@@ -60,9 +70,27 @@ class FakeDrawingModel:
         self.named_args = (path, name, x, y, z)
         return self._named
 
-    def InsertModelAnnotations3(self, *args):
-        self.inserted = args
-        return True
+    def ActivateView(self, name):
+        self.activated.append(name)
+        if not self.activate_ok:
+            return False
+        self.active = self._find(name)
+        return self.active is not None
+
+    def AutoDimension(self, *args):
+        self.autodim_args.append(args)
+        # The real call dimensions whatever SolidWorks has active, which is why
+        # SwDrawing has to activate first; nowhere else is the dimension count
+        # allowed to move.
+        if self.active is not None:
+            self.active.dimensions += self.gain
+        return 1
+
+    def _find(self, name):
+        for view in self.sheet.GetViews():
+            if view.Name == name:
+                return view
+        return None
 
     def _save_as(self, path, *args):
         self.saved.append(path)
@@ -131,10 +159,39 @@ def test_save_blames_a_locked_file_only_when_the_file_exists(tmp_path, fake_com)
         drawing.save(tmp_path / "new.SLDDRW")
 
 
-def test_annotations_ask_for_dimensions_and_notes():
-    drawing = SwDrawing(FakeDrawingModel())
-    drawing.annotations()
-    assert drawing.model.inserted == (0, 1, True, True, False, False)
+def test_auto_dimension_activates_the_view_first_and_counts_what_was_added():
+    view = FakeView("swforge_iso", dimensions=2)
+    model = FakeDrawingModel(sheet=FakeSheet(views=[view]), gain=4)
+    assert SwDrawing(model).auto_dimension("swforge_iso") == 4
+    assert model.activated == ["swforge_iso"], "AutoDimension follows the active view"
+    assert view.dimensions == 6
+    assert model.autodim_args == [(1, 1, 1, 1, 1)], "all entities, baseline scheme"
+
+
+def test_auto_dimension_passes_the_scheme_and_both_placements():
+    model = FakeDrawingModel(sheet=FakeSheet(views=[FakeView("front")]))
+    SwDrawing(model).auto_dimension("front", scheme=3, horizontal_placement=-1)
+    assert model.autodim_args == [(1, 3, -1, 3, 1)]
+
+
+def test_dimension_count_reads_the_method_form():
+    view = FakeView("front", dimensions=7)
+    drawing = SwDrawing(FakeDrawingModel(sheet=FakeSheet(views=[view])))
+    assert drawing.dimension_count("front") == 7
+
+
+def test_activate_view_says_the_name_has_to_come_from_solidworks():
+    model = FakeDrawingModel(sheet=FakeSheet(views=[FakeView("Drawing View1")]))
+    drawing = SwDrawing(model)
+    with pytest.raises(SwError, match="cannot activate drawing view 'swforge_front'"):
+        drawing.activate_view("swforge_front")
+
+
+def test_auto_dimension_does_nothing_without_a_view_to_activate():
+    model = FakeDrawingModel(sheet=FakeSheet(views=[FakeView("Drawing View1")]))
+    with pytest.raises(SwError, match="no view named 'swforge_front'"):
+        SwDrawing(model).auto_dimension("swforge_front")
+    assert model.autodim_args == [], "a missing view must not be dimensioned blind"
 
 
 def test_a_drawing_without_a_sheet_says_so():

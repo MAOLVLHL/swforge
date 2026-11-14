@@ -396,6 +396,125 @@ def test_a_hand_edited_part_still_has_to_survive_the_check(tmp_path, monkeypatch
     assert events[0][1]["ok"] is False
 
 
+class FakeDrawModel:
+    """The document draw() opens, shows the four orientations on, and closes."""
+
+    def __init__(self):
+        self.named_views: list[str] = []
+        self.closed = False
+
+    def ShowNamedView2(self, name, view_id):
+        self.shown = getattr(self, "shown", []) + [view_id]
+
+    def NameView(self, name):
+        self.named_views.append(name)
+
+    def GetTitle(self):
+        return "plate"
+
+    def ClearSelection2(self, all_):
+        return True
+
+
+class FakeDrawingDoc:
+    """A drawing that grows one view per add_named_view, then dimension it."""
+
+    def __init__(self, gain=2):
+        self.gain = gain
+        self.calls: list[tuple[str, int]] = []
+        self.dimensioned: list[str] = []
+        self.saved = None
+        self.exported = None
+        self.closed = False
+
+    def add_named_view(self, model_path, view_name, x_mm, y_mm):
+        placed = f"Drawing View{len(self.calls) + 1}"
+        self.calls.append((placed, 0))
+        return placed
+
+    def auto_dimension(self, view_name, **kwargs):
+        self.dimensioned.append(view_name)
+        for index, (name, count) in enumerate(self.calls):
+            if name == view_name:
+                self.calls[index] = (name, count + self.gain)
+                return self.gain
+        raise AssertionError(f"dimensioned a view that is not there: {view_name}")
+
+    def save(self, path):
+        self.saved = path
+        return path
+
+    def export_pdf(self, path):
+        self.exported = path
+        return path
+
+    def close(self):
+        self.closed = True
+
+
+def _draw_session(drawing):
+    events = []
+    session = SimpleNamespace(
+        open_document=lambda path, doctype: FakeDrawModel(),
+        activate=lambda model: events.append("activate"),
+        new_drawing=lambda sheet=None: drawing,
+        app=None,
+    )
+    return session
+
+
+def test_draw_dimensions_each_view_as_it_is_placed(tmp_path, monkeypatch):
+    """AutoDimension only reaches the active view, so the order here is the feature.
+
+    Placing all four views and dimensioning them afterwards puts every
+    dimension on the last view and leaves the other three at zero (measured:
+    front/top/right 0, iso 9).  Interleaving is what produces four annotated
+    views, so the fake records the interleaving, not just the totals.
+    """
+    from swforge import generate
+
+    drawing = FakeDrawingDoc(gain=2)
+    monkeypatch.setattr(
+        generate, "SwModel", lambda model, app: SimpleNamespace(close=lambda: None)
+    )
+
+    files = generate.draw(
+        _draw_session(drawing), tmp_path / "plate.sldprt", out_dir=str(tmp_path)
+    )
+
+    assert len(drawing.calls) == 4, "four views, none of them skipped"
+    assert drawing.calls == [
+        ("Drawing View1", 2),
+        ("Drawing View2", 2),
+        ("Drawing View3", 2),
+        ("Drawing View4", 2),
+    ], "every view was dimensioned, and each view got its own dimensions"
+    assert files["dimensions"] == "8"
+    assert files["views"] == (
+        "Drawing View1, Drawing View2, Drawing View3, Drawing View4"
+    )
+    assert drawing.closed
+
+
+def test_draw_can_leave_the_views_unannotated(tmp_path, monkeypatch):
+    from swforge import generate
+
+    drawing = FakeDrawingDoc()
+    monkeypatch.setattr(
+        generate, "SwModel", lambda model, app: SimpleNamespace(close=lambda: None)
+    )
+
+    files = generate.draw(
+        _draw_session(drawing),
+        tmp_path / "plate.sldprt",
+        out_dir=str(tmp_path),
+        dimensions=False,
+    )
+
+    assert drawing.dimensioned == [], "--no-dimensions must not dimension"
+    assert files["dimensions"] == "0"
+
+
 def test_a_missing_part_is_not_an_error_and_says_nothing(tmp_path):
     """None is the signal to build it; a resumed run must not report a stage for it."""
     from swforge import generate
