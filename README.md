@@ -238,6 +238,21 @@ views: Drawing View1, Drawing View2, Drawing View3, Drawing View4
 dimensions: 21
 ```
 
+`--views` is the one argument that is a list of names rather than a file, and it is checked
+before a document is opened, so it answers the same way the file arguments do:
+
+```console
+$ swforge draw build/flange_DN50.sldprt --views frnt
+error: unknown drawing view 'frnt'; known views: front, top, right, iso
+$ swforge draw build/flange_DN50.sldprt --views ""
+error: no drawing views to place; pick at least one of front, top, right, iso
+```
+
+Both are exit code 2. A misspelled orientation used to reach a dictionary lookup four frames
+down and leave as a `KeyError` traceback, and an empty flag used to write a sheet with nothing
+on it and report success. The two failures look nothing alike and are the same one: the
+argument was never checked.
+
 ## Coordinate convention
 
 Parts are modelled with their axis along **−Y**: the profile sketch lives on the Top plane (XZ)
@@ -337,7 +352,7 @@ second run into a clean directory reproduces them and leaves no documents open b
 ## Tests
 
 ```bash
-pytest        # 249 tests, no SolidWorks required
+pytest        # 260 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,
