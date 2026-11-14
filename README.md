@@ -102,6 +102,40 @@ swforge assemble bolt_stack.json -o build --resume
 From Python the same shortcut is `reuse_part` returning a result, or `parts_done=` on
 `build_assembly` — which is what `examples/build_showcase.py` has always done by hand.
 
+### When the input file is the problem
+
+Every way a spec or assembly file can be wrong is answered with one line on stderr and **exit
+code 2**, before SolidWorks is attached:
+
+```console
+$ swforge build typo.json
+error: spec 'M8': unknown part kind 'washerr'; known: flange, hex_bolt, ...; run 'swforge kinds' for the list
+$ swforge build trailing.json
+error: spec file trailing.json is not valid JSON: Illegal trailing comma before end of object (line 1, column 18)
+$ swforge build nosize.json
+error: spec 'nosize': missing the 'size' parameter; run 'swforge kinds' to see what washer needs
+$ swforge build m7.json
+error: spec 'b': 'M7' is not in GB/T 5783 hex bolts; known sizes: M10, M12, M16, M20, M6, M8
+$ swforge build badsize.json
+error: spec 'w': washer cannot use these parameters: 'int' object has no attribute 'upper'
+```
+
+The last one is the case a schema check cannot catch: the file is valid JSON, the key is
+spelled right, and the value is simply not a size. `swforge.parts` raises `ParamError` (a
+`ValueError`) for it, so the sentence names the kind instead of leaking the
+`AttributeError` that `upper()` raised three frames down. `assemble --dry-run` runs the same
+check over every part of an assembly, so a stack that cannot be built is refused before
+SolidWorks opens a document.
+
+2 means the run never started — a path you typed wrong, a file Notepad saved with a byte-order
+mark, a kind you misspelled, a parameter you left out, an assembly with no parts. 1 still means a
+build ran and disagreed with its analytic answer. Keeping those apart is what lets a script retry
+on 1 and stop on 2, so `verify` answers for the file alone, with no CAD session involved.
+
+A UTF-8 byte-order mark is accepted rather than rejected: `Set-Content` and Notepad both write
+one, and calling that file broken is the most confusing thing a Windows tool can do to a user
+whose JSON is perfectly valid.
+
 ## Parts
 
 Eight kinds ship today. Four are GB standard fasteners driven by catalogue tables, four are
@@ -255,7 +289,7 @@ second run into a clean directory reproduces them and leaves no documents open b
 ## Tests
 
 ```bash
-pytest        # 145 tests, no SolidWorks required
+pytest        # 171 tests, no SolidWorks required
 ```
 
 ## License

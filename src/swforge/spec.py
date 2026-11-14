@@ -52,11 +52,62 @@ class PartSpec:
 SPEC_ENCODING = "utf-8-sig"
 
 
+class SpecError(ValueError):
+    """A spec file a person can fix: unreadable, not JSON, or missing fields.
+
+    Every failure of the input path ends up as this one type, so a caller can
+    answer "your file says X" instead of printing a traceback.  The message is
+    written for the person who typed the file, not for a stack frame.
+    """
+
+
+def read_json(path: str | Path, what: str) -> Any:
+    """Read *path* as JSON, turning every readable failure into a SpecError.
+
+    The file is decoded with :data:`SPEC_ENCODING` so a byte-order mark -- what
+    Notepad and PowerShell's `Set-Content` write -- is accepted rather than
+    reported as a broken file.
+    """
+    target = Path(path)
+    try:
+        text = target.read_text(encoding=SPEC_ENCODING)
+    except FileNotFoundError:
+        raise SpecError(f"{what} file not found: {target}") from None
+    except OSError as error:
+        raise SpecError(
+            f"cannot read {what} file {target}: {error.strerror or error}"
+        ) from None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as error:
+        raise SpecError(
+            f"{what} file {target} is not valid JSON: {error.msg} "
+            f"(line {error.lineno}, column {error.colno})"
+        ) from None
+
+
 def load_specs(path: str | Path) -> list[PartSpec]:
     """Load a JSON file holding either one spec or a list of specs."""
-    raw = json.loads(Path(path).read_text(encoding=SPEC_ENCODING))
+    raw = read_json(path, "spec")
     items = raw if isinstance(raw, list) else [raw]
-    return [PartSpec.from_dict(item) for item in items]
+    if not items:
+        raise SpecError(f"spec file {path} holds an empty list; nothing to build")
+    specs = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise SpecError(
+                f"{path}: entry {index} is a {type(item).__name__}, "
+                "expected an object with kind and name"
+            )
+        try:
+            specs.append(PartSpec.from_dict(item))
+        except KeyError as error:
+            raise SpecError(
+                f"{path}: entry {index} is missing the {error.args[0]!r} field"
+            ) from None
+        except (TypeError, ValueError) as error:
+            raise SpecError(f"{path}: entry {index} is invalid: {error}") from None
+    return specs
 
 
 def dump_specs(specs: list[PartSpec], path: str | Path) -> None:

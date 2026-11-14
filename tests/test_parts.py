@@ -152,3 +152,40 @@ def test_flange_rejects_a_bore_bigger_than_the_hub():
                 "bore_d": 50.0,
             },
         )
+
+def test_a_size_that_is_not_a_string_is_a_param_error_not_an_attribute_error():
+    # catalog calls designation.upper(), so a number raises AttributeError from
+    # two frames down.  The registry turns that into one exception type that says
+    # which kind could not use the parameters.
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.analytic("washer", {"size": 8})
+    assert "washer cannot use these parameters" in str(excinfo.value)
+    assert isinstance(excinfo.value, ValueError), "callers catch ValueError"
+
+
+def test_a_size_the_table_does_not_have_keeps_the_catalogue_message():
+    # An unknown designation is also a KeyError, but its message already tells
+    # the user the sizes that do exist -- wrapping it would bury that list.
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.analytic("hex_bolt", {"size": "M7", "length": 40})
+    message = str(excinfo.value)
+    assert "'M7' is not in GB/T 5783 hex bolts" in message
+    assert "known sizes" in message
+
+
+def test_a_missing_parameter_stays_a_key_error():
+    # The CLI answers a missing parameter by naming it, which it can only do
+    # while the KeyError survives with the field name in args[0].
+    with pytest.raises(KeyError) as excinfo:
+        parts.analytic("hex_bolt", {"size": "M8"})
+    assert excinfo.value.args[0] == "length"
+
+
+def test_build_reports_bad_parameters_the_same_way_as_analytic():
+    # build() is the path a real SolidWorks run takes, and it reads the same
+    # params, so it has to fail the same way instead of raising AttributeError
+    # halfway through a sketch the user cannot see.
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.build(object(), "washer", {"size": 8})
+    assert "washer cannot use these parameters" in str(excinfo.value)
+

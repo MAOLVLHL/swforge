@@ -27,6 +27,19 @@ from . import (
     washer,
 )
 
+
+class ParamError(ValueError):
+    """Raised when a builder cannot make sense of the parameters it was handed.
+
+    A JSON file can put any type in any field, so the first thing a builder does
+    with a designation -- upper() -- fails with AttributeError when the value is
+    a number, and float("M8") fails with ValueError when a length is a word.  To
+    the person who wrote the file both mean the same thing: these are not the
+    parameters this kind takes.  Naming the kind here is what turns either one
+    into a sentence instead of a traceback.
+    """
+
+
 Analytic = Callable[[dict[str, Any]], Solid]
 Builder = Callable[[Any, dict[str, Any]], None]
 
@@ -67,20 +80,48 @@ def _check_registry() -> None:
 _check_registry()
 
 
+def check_kind(kind: str) -> None:
+    """Raise KeyError, with the known kinds, when *kind* has no builder.
+
+    Split out so a caller can tell the two KeyErrors apart: an unknown kind is
+    this function's message, while a KeyError that escapes the builder is a
+    missing parameter.  They need different advice, so they cannot share one
+    catch-all.
+
+    A kind that is not a string at all is answered here too: a JSON file can put
+    a list where a name belongs, and "kind not in PARTS" would raise TypeError
+    (unhashable) instead of the message the caller knows how to report.
+    """
+    if not isinstance(kind, str) or kind not in PARTS:
+        raise KeyError(f"unknown part kind {kind!r}; known: {', '.join(KINDS)}")
+
+
 def analytic(kind: str, params: dict[str, Any]) -> Solid:
+    check_kind(kind)
+    filler, _ = PARTS[kind]
     try:
-        filler, _ = PARTS[kind]
-    except KeyError:
-        raise KeyError(f"unknown part kind {kind!r}; known: {', '.join(KINDS)}") from None
-    return filler(params)
+        return filler(params)
+    except KeyError as error:
+        missing = error.args[0] if error.args else None
+        if isinstance(missing, str) and missing.isidentifier():
+            raise  # a missing parameter: the caller says which one is needed
+        raise ParamError(str(missing)) from None
+    except (AttributeError, TypeError) as error:
+        raise ParamError(f"{kind} cannot use these parameters: {error}") from None
 
 
 def build(model: Any, kind: str, params: dict[str, Any]) -> None:
+    check_kind(kind)
+    _, builder = PARTS[kind]
     try:
-        _, builder = PARTS[kind]
-    except KeyError:
-        raise KeyError(f"unknown part kind {kind!r}; known: {', '.join(KINDS)}") from None
-    builder(model, params)
+        builder(model, params)
+    except KeyError as error:
+        missing = error.args[0] if error.args else None
+        if isinstance(missing, str) and missing.isidentifier():
+            raise  # a missing parameter: the caller says which one is needed
+        raise ParamError(str(missing)) from None
+    except (AttributeError, TypeError) as error:
+        raise ParamError(f"{kind} cannot use these parameters: {error}") from None
 
 
 def schema() -> list[dict[str, Any]]:
