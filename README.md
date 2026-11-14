@@ -47,6 +47,12 @@ swforge build  showcase.json -o build
 `build` attaches to the running SolidWorks, builds each part, compares against the analytic
 answer, and writes `.sldprt` + `.step`. Exit code is non-zero if any part disagrees.
 
+`-o` is resolved against *your* current directory before it is handed to COM, so a relative
+`build` lands next to the spec wherever you ran the command. (It did not always: SolidWorks
+expands a relative path against its own working directory, so until this was fixed the line
+above wrote into whatever folder the application was started from and failed with
+`save failed: build\washer_M8.sldprt (errors=1, warnings=0)`.)
+
 A run of eight parts takes minutes, so `build` and `assemble` accept `-v` to log every stage to
 stderr as it starts:
 

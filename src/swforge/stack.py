@@ -28,7 +28,7 @@ from typing import Any, Iterator
 
 from . import parts
 from .geometry import Solid
-from .spec import PartSpec
+from .spec import SPEC_ENCODING, PartSpec
 
 #: Mate kinds accepted by AssemblySpec.mates; 0 distance means coincident.
 MATE_KINDS = ("coincident", "distance")
@@ -238,8 +238,10 @@ class AssemblySpec:
 
 
 def load_assembly(path: str | Path) -> AssemblySpec:
+    # Same encoding rule as load_specs(), for the same reason: an assembly JSON
+    # written from PowerShell carries a BOM and json.loads rejects it.
     return AssemblySpec.from_dict(
-        json.loads(Path(path).read_text(encoding="utf-8"))
+        json.loads(Path(path).read_text(encoding=SPEC_ENCODING))
     )
 
 

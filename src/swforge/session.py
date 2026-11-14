@@ -536,7 +536,17 @@ class SwModel:
 
     def save(self, path: str | Path) -> Path:
         self._require_open()
-        target = Path(path)
+        # Resolve before handing the path to COM.  Extension.SaveAs does not
+        # resolve: a relative target is taken against SolidWorks' own working
+        # directory, which is the folder the application was started from and
+        # has nothing to do with the caller's cwd.  `swforge build ... -o build`
+        # therefore tried to write into whatever folder the user last opened a
+        # document from, failed with swFileSaveError 1, and reported it as
+        # "save failed: build\plate.sldprt (errors=1, warnings=0)" -- a message
+        # that names the wrong directory and blames the file.  open_document()
+        # has resolved its path all along; this is the same rule, applied where
+        # the write happens.
+        target = Path(path).resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
         pythoncom, _ = _com()
         from win32com.client import VARIANT  # type: ignore
@@ -639,7 +649,10 @@ class SwModel:
         as by-reference VARIANTs; plain ints raise a type mismatch.
         """
         self._require_open()
-        target = Path(path)
+        # Same reason as save(): COM resolves relative paths against the
+        # SolidWorks process, not against us.  A STEP written next to a part
+        # has to land next to *that* part, wherever the caller ran from.
+        target = Path(path).resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
         pythoncom, _ = _com()
         from win32com.client import VARIANT  # type: ignore
