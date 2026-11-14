@@ -347,12 +347,14 @@ def _run(args: argparse.Namespace) -> int:
         session = _attach()
         if session is None:
             return ARG_ERROR
-        views = tuple(v.strip() for v in args.views.split(",") if v.strip())
+        # The view names are validated inside draw(), so a typo there reaches
+        # main() as a SpecError: one sentence on stderr and exit code 2, the
+        # same answer every other bad argument gets.
         files = draw(
             session,
             args.model,
             out_dir=args.out,
-            views=views,
+            views=args.views,
             sheet=args.sheet,
             dimensions=not args.no_dimensions,
         )
