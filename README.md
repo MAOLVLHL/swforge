@@ -152,7 +152,9 @@ whose JSON is perfectly valid.
 Eight kinds ship today. Four are GB standard fasteners driven by catalogue tables, four are
 simple non-standard parts driven by user dimensions. `swforge kinds` prints the list, and
 `swforge.parts.schema()` returns it as data for anything that wants to build a form or a
-validator over it.
+validator over it: each row carries a `params` list naming the keys that kind reads, whether
+each one is required, the value the builder falls back to when an optional key is omitted,
+and the catalogue values when the key is looked up in a table rather than taken as given.
 
 | kind | params | analytic volume (showcase) |
 |---|---|---|
@@ -161,9 +163,12 @@ validator over it.
 | `washer` | `size` | 233.0 mm³ (M8) |
 | `socket_screw` | `size`, `length` | 1100.2 mm³ (M6×25) |
 | `l_bracket` | `leg_a`, `leg_b`, `width`, `thickness`, `hole_d`, `holes_per_leg` | 18363.8 mm³ |
-| `multi_hole_plate` | `length`, `width`, `thickness`, `hole_d`, `rows`, `cols` | 55309.8 mm³ |
+| `multi_hole_plate` | `length`, `width`, `thickness`, `hole_d`, `rows`, `cols`, `margin` | 55309.8 mm³ |
 | `stepped_shaft` | `d1`/`l1`, `d2`/`l2`, `d3`/`l3` | 18456.9 mm³ |
 | `flange` | `outer_d`, `hub_d`, `plate_t`, `hub_h`, `bore_d`, `bolt_d`, `bolt_count`, `bolt_circle_d` | 74568.8 mm³ |
+
+`length` is free-form on the two kinds that take it: the builder converts whatever positive
+number it is given and does not consult a table, so `schema()` advertises no choices for it.
 
 Catalogue tables cover M6–M20 for GB/T 5783 (hex bolts), GB/T 6170 (hex nuts),
 GB/T 97.1 (plain washers) and GB/T 70.1 (socket head cap screws), at maximum material
@@ -172,6 +177,8 @@ condition.
 The list of kinds has exactly one home, `swforge.kinds`, and `swforge.parts` refuses to
 import if it registers a different set — a kind promised by the type annotation and missing
 from the registry should be an ImportError at build time, not a KeyError for the first user.
+Each builder likewise declares the keys it reads in a `PARAMS` tuple in its own module, and a
+kind that declares none fails the import too.
 
 ## Assemblies
 
@@ -330,7 +337,7 @@ second run into a clean directory reproduces them and leaves no documents open b
 ## Tests
 
 ```bash
-pytest        # 183 tests, no SolidWorks required
+pytest        # 211 tests, no SolidWorks required
 ```
 
 ## License
