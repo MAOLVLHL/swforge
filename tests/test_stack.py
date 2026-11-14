@@ -11,7 +11,7 @@ import pytest
 
 from swforge import parts
 from swforge.demo import BOLT_HOLES, HEAD_HEIGHT_M8, bolt_stack
-from swforge.spec import PartSpec
+from swforge.spec import PartSpec, SpecError
 from swforge.stack import AssemblySpec, Mate, Placement, dump_assembly, load_assembly
 
 
@@ -195,3 +195,41 @@ def test_load_assembly_reads_a_file_that_starts_with_a_bom(tmp_path):
         "an assembly spec written from PowerShell carries a BOM; reading it "
         "as plain utf-8 raises Unexpected UTF-8 BOM before any of it is used"
     )
+
+
+# -- a hand-written assembly file fails with a sentence ---------------------
+
+
+def test_load_assembly_reports_a_missing_file(tmp_path):
+    path = tmp_path / "nope.json"
+    with pytest.raises(SpecError) as caught:
+        load_assembly(path)
+    assert str(caught.value) == f"assembly file not found: {path}"
+
+
+def test_load_assembly_says_a_list_is_not_an_assembly(tmp_path):
+    path = tmp_path / "list.json"
+    path.write_text("[]", encoding="utf-8")
+    with pytest.raises(SpecError) as caught:
+        load_assembly(path)
+    assert str(caught.value) == (
+        f"assembly file {path} holds a list, expected an object with name and parts"
+    )
+
+
+def test_load_assembly_names_the_missing_field(tmp_path):
+    path = tmp_path / "noname.json"
+    path.write_text(json.dumps({"parts": {}}), encoding="utf-8")
+    with pytest.raises(SpecError) as caught:
+        load_assembly(path)
+    assert str(caught.value) == f"assembly file {path} is missing the 'name' field"
+
+
+def test_load_assembly_refuses_a_file_with_no_parts(tmp_path):
+    # Without this the run would attach to SolidWorks, insert nothing, and
+    # report success for an assembly that was never built.
+    path = tmp_path / "empty.json"
+    path.write_text(json.dumps({"name": "empty"}), encoding="utf-8")
+    with pytest.raises(SpecError) as caught:
+        load_assembly(path)
+    assert str(caught.value) == f"assembly file {path} has no parts; nothing to build"

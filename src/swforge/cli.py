@@ -11,7 +11,7 @@ from typing import Any, Sequence
 from . import catalog, parts
 from .demo import bolt_stack, showcase
 from .generate import build_assembly, draw, generate, reuse_part
-from .spec import PartSpec, dump_specs, load_specs
+from .spec import PartSpec, SpecError, dump_specs, load_specs
 from .stack import AssemblySpec, dump_assembly, load_assembly
 
 
@@ -103,9 +103,38 @@ def _log_stages() -> None:
     logger.setLevel(logging.INFO)
 
 
+def _unquote(message: str) -> str:
+    """Strip the quotes str(KeyError) adds, so the message reads as a sentence."""
+    if len(message) >= 2 and message[0] == message[-1] and message[0] in "'\"":
+        return message[1:-1]
+    return message
+
+
 def _print_plan(specs: Sequence[PartSpec]) -> None:
+    """Print one line per spec, or raise SpecError naming the spec that is wrong.
+
+    The analytic filler is computed here, which makes this the first place a bad
+    kind or a missing parameter surfaces -- before SolidWorks is even attached.
+    Reporting it as a SpecError keeps that failure on the input path instead of
+    turning it into a KeyError traceback the user cannot act on.
+    """
     for spec in specs:
-        solid = parts.analytic(spec.kind, spec.params)
+        try:
+            parts.check_kind(spec.kind)
+        except KeyError as error:
+            raise SpecError(
+                f"spec {spec.name!r}: {_unquote(str(error))}; "
+                "run 'swforge kinds' for the list"
+            ) from None
+        try:
+            solid = parts.analytic(spec.kind, spec.params)
+        except KeyError as error:
+            raise SpecError(
+                f"spec {spec.name!r}: missing the {_unquote(str(error))!r} "
+                f"parameter; run 'swforge kinds' to see what {spec.kind} needs"
+            ) from None
+        except (parts.ParamError, TypeError, ValueError) as error:
+            raise SpecError(f"spec {spec.name!r}: {error}") from None
         bbox = "x".join(f"{v:.2f}" for v in solid.bbox_mm)
         print(
             f"{spec.kind:<17} {spec.name:<16} "
@@ -196,10 +225,59 @@ def _build_specs(
     return failures
 
 
+def _load_assembly(path: str):
+    """Load an assembly and validate it, so a bad one fails before SolidWorks.
+
+    validate() is the contract the build relies on: names that line up, mates
+    that refer to instances that exist.  Running it here means `verify` and
+    `assemble --dry-run` answer for the file itself, without a CAD session.
+    """
+    assembly = load_assembly(path)
+    try:
+        assembly.validate()
+        # validate() only checks that the names line up.  The parameters inside
+        # each part are read here too, because a stack whose washers have a size
+        # of 7 or a length of "M8" is just as unusable as one that mates an
+        # instance that does not exist -- and until now it reached SolidWorks and
+        # failed there, or was never noticed at all on the dry-run path.
+        assembly.predict()
+    except KeyError as error:
+        missing = error.args[0] if error.args else None
+        if isinstance(missing, str) and missing.isidentifier():
+            raise SpecError(
+                f"assembly file {path}: missing the {missing!r} parameter"
+            ) from None
+        raise SpecError(f"assembly file {path}: {_unquote(str(error))}") from None
+    except ValueError as error:
+        raise SpecError(f"assembly file {path}: {error}") from None
+    return assembly
+
+
+#: Exit code for "the arguments or the input file were wrong", the same code an
+#: unreachable SolidWorks gets: the run did not start, which is not a build that
+#: failed (1).  Keeping the two apart is what lets a script retry on 1 but stop
+#: on 2.
+ARG_ERROR = 2
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the CLI, turning a bad input file into one sentence and exit code 2.
+
+    Every path that reads a file or validates a spec raises :class:`SpecError`
+    with a message meant for the person who wrote the file.  Catching it here,
+    once, is what keeps a typo from reaching the user as a traceback while still
+    letting a genuine bug in swforge raise normally.
+    """
     parser = _build_parser()
     args = parser.parse_args(argv)
+    try:
+        return _run(args)
+    except SpecError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return ARG_ERROR
 
+
+def _run(args: argparse.Namespace) -> int:
     if args.command == "catalog":
         print(catalog.summary())
         return 0
@@ -224,7 +302,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "verify":
         if args.assembly:
-            assembly = load_assembly(args.spec)
+            assembly = _load_assembly(args.spec)
             print("\n".join(assembly.summary()))
             return 0
         _print_plan(load_specs(args.spec))
@@ -233,13 +311,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "assemble":
         if args.verbose:
             _log_stages()
-        assembly = load_assembly(args.spec)
+        assembly = _load_assembly(args.spec)
         print("\n".join(assembly.summary()))
         if args.dry_run:
             return 0
         session = _attach()
         if session is None:
-            return 2
+            return ARG_ERROR
         parts_done = {}
         if args.resume:
             parts_done = _resume_parts(
@@ -263,7 +341,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "draw":
         session = _attach()
         if session is None:
-            return 2
+            return ARG_ERROR
         views = tuple(v.strip() for v in args.views.split(",") if v.strip())
         files = draw(
             session, args.model, out_dir=args.out, views=views, sheet=args.sheet
@@ -281,7 +359,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     session = _attach()
     if session is None:
-        return 2
+        return ARG_ERROR
 
     failures = _build_specs(
         session, specs, args.out, not args.no_step, resume=args.resume

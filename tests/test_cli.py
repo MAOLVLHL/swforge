@@ -1,4 +1,5 @@
 import json
+import re
 
 from swforge.cli import main
 from swforge.demo import bolt_stack, showcase
@@ -333,3 +334,141 @@ def test_assemble_without_resume_rebuilds_the_parts(monkeypatch, tmp_path):
 
     assert main(["assemble", str(target)]) == 0
     assert seen["parts_done"] == {}
+
+
+# -- a bad input file is answered in one sentence, exit 2 -------------------
+#
+# These are the failures a user actually meets: a path they typed wrong, a file
+# they saved from Notepad, a kind they misspelled.  All of them used to arrive
+# as a traceback, which says where swforge gave up and nothing about the file.
+
+
+def test_a_missing_spec_file_is_one_sentence_and_exit_two(tmp_path, capsys):
+    path = tmp_path / "nope.json"
+    assert main(["build", str(path)]) == 2, "the run never started, so not a build failure"
+    captured = capsys.readouterr()
+    assert captured.err == f"error: spec file not found: {path}\n"
+    assert captured.out == "", "nothing was planned, so nothing is printed to stdout"
+
+
+def test_a_json_typo_reports_the_line_and_column(tmp_path, capsys):
+    path = tmp_path / "trailing.json"
+    path.write_text('{"kind": "washer",}', encoding="utf-8")
+    assert main(["build", str(path)]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith(f"error: spec file {path} is not valid JSON: ")
+    assert re.search(r"\(line 1, column \d+\)\n$", err), err
+
+
+def test_a_misspelled_kind_lists_the_kinds_that_exist(tmp_path, capsys):
+    path = tmp_path / "typo.json"
+    path.write_text('{"kind": "washerr", "name": "M8"}', encoding="utf-8")
+    assert main(["build", str(path), "--dry-run"]) == 2
+    err = capsys.readouterr().err
+    assert "unknown part kind 'washerr'" in err
+    assert "known: flange, hex_bolt" in err
+    assert "run 'swforge kinds' for the list" in err
+
+
+def test_a_missing_parameter_names_the_parameter_not_the_kind(tmp_path, capsys):
+    # An unknown kind and a missing parameter are both KeyError inside the
+    # registry, but they need opposite advice: fix the kind, or add the field.
+    path = tmp_path / "nosize.json"
+    path.write_text('{"kind": "washer", "name": "nosize"}', encoding="utf-8")
+    assert main(["build", str(path), "--dry-run"]) == 2
+    err = capsys.readouterr().err
+    assert "missing the 'size' parameter" in err
+    assert "unknown part kind" not in err
+
+
+def test_a_spec_file_with_a_bom_still_builds(tmp_path, capsys):
+    path = tmp_path / "bom.json"
+    path.write_text('{"kind": "washer", "name": "M8", "params": {"size": "M8"}}', encoding="utf-8-sig")
+    assert main(["build", str(path), "--dry-run"]) == 0
+    assert "washer" in capsys.readouterr().out
+
+
+def test_an_assembly_that_names_an_unknown_part_is_rejected_before_solidworks(
+    tmp_path, capsys
+):
+    from swforge.demo import bolt_stack
+
+    spec = bolt_stack()
+    payload = spec.to_dict()
+    payload["placements"][0]["part"] = "ghost"
+    path = tmp_path / "ghost.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert main(["assemble", str(path), "--dry-run"]) == 2
+    err = capsys.readouterr().err
+    assert "refers to unknown part 'ghost'" in err
+    assert "known:" in err
+
+
+# -- a parameter of the wrong type is the same kind of mistake --------------
+#
+# The section above covers the file: missing, unreadable, not JSON.  These cover
+# values that parse fine and are still unusable, which is the harder case -- the
+# file is valid JSON, so only the part builder can say what is wrong with it.
+
+
+def test_a_parameter_of_the_wrong_type_is_one_sentence_not_a_traceback(tmp_path, capsys):
+    # A JSON file can put a number where a size belongs.  catalog then calls
+    # upper() on it and raises AttributeError, which is neither a SpecError nor
+    # anything the person who wrote the file can act on -- so it used to escape
+    # main() as a traceback even though the same file with a *missing* size was
+    # already answered in one sentence.
+    path = tmp_path / "badsize.json"
+    path.write_text(
+        '{"kind": "washer", "name": "w", "params": {"size": 8}}', encoding="utf-8"
+    )
+    assert main(["build", str(path), "--dry-run"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error: spec 'w': washer cannot use these parameters: "), err
+    assert "AttributeError" not in err
+    assert "Traceback" not in err
+
+
+def test_a_size_the_catalogue_does_not_know_is_not_reported_as_missing(tmp_path, capsys):
+    # catalog raises KeyError for an unknown designation, the builder raises the
+    # same type for a missing parameter, and the two need opposite advice:
+    # "pick another size" versus "add the size field".  Telling the user their
+    # size is missing when it is present but wrong sends them in circles.
+    path = tmp_path / "m7.json"
+    path.write_text(
+        '{"kind": "hex_bolt", "name": "b", "params": {"size": "M7", "length": 40}}',
+        encoding="utf-8",
+    )
+    assert main(["build", str(path), "--dry-run"]) == 2
+    err = capsys.readouterr().err
+    assert "'M7' is not in" in err and "known sizes" in err
+    assert "missing the" not in err
+
+
+def test_a_kind_that_is_not_even_a_string_is_still_answered(tmp_path, capsys):
+    # "kind not in PARTS" raises TypeError for a list, because a list is
+    # unhashable.  That would have escaped main() as a traceback too.
+    path = tmp_path / "listkind.json"
+    path.write_text('{"kind": ["washer"], "name": "w"}', encoding="utf-8")
+    assert main(["build", str(path), "--dry-run"]) == 2
+    err = capsys.readouterr().err
+    assert "unknown part kind ['washer']" in err
+    assert "run 'swforge kinds' for the list" in err
+
+
+def test_an_assembly_with_an_unusable_parameter_is_rejected_before_solidworks(
+    tmp_path, capsys,
+):
+    # validate() only checks that names line up.  It never reads the parameters,
+    # so this stack used to pass the dry run and fail inside SolidWorks.
+    from swforge.demo import bolt_stack
+
+    payload = bolt_stack().to_dict()
+    for spec in payload["parts"].values():
+        if spec["kind"] == "hex_bolt":
+            spec["params"]["size"] = 8
+    path = tmp_path / "badparam.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert main(["assemble", str(path), "--dry-run"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith(f"error: assembly file {path}: hex_bolt cannot use "), err
+

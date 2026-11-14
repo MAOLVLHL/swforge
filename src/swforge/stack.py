@@ -28,7 +28,7 @@ from typing import Any, Iterator
 
 from . import parts
 from .geometry import Solid
-from .spec import SPEC_ENCODING, PartSpec
+from .spec import PartSpec, SpecError, read_json
 
 #: Mate kinds accepted by AssemblySpec.mates; 0 distance means coincident.
 MATE_KINDS = ("coincident", "distance")
@@ -238,11 +238,30 @@ class AssemblySpec:
 
 
 def load_assembly(path: str | Path) -> AssemblySpec:
-    # Same encoding rule as load_specs(), for the same reason: an assembly JSON
-    # written from PowerShell carries a BOM and json.loads rejects it.
-    return AssemblySpec.from_dict(
-        json.loads(Path(path).read_text(encoding=SPEC_ENCODING))
-    )
+    """Load an assembly spec, reporting a bad file as a SpecError.
+
+    The shape checks are the ones a hand-written file actually fails: a list
+    where an object belongs, a missing name, a part entry that is not a spec.
+    The deeper consistency checks stay in :meth:`AssemblySpec.validate`, which
+    the caller runs once it knows what it is building.
+    """
+    data = read_json(path, "assembly")
+    if not isinstance(data, dict):
+        raise SpecError(
+            f"assembly file {path} holds a {type(data).__name__}, "
+            "expected an object with name and parts"
+        )
+    try:
+        spec = AssemblySpec.from_dict(data)
+    except KeyError as error:
+        raise SpecError(
+            f"assembly file {path} is missing the {error.args[0]!r} field"
+        ) from None
+    except (TypeError, ValueError) as error:
+        raise SpecError(f"assembly file {path} is invalid: {error}") from None
+    if not spec.parts:
+        raise SpecError(f"assembly file {path} has no parts; nothing to build")
+    return spec
 
 
 def dump_assembly(spec: AssemblySpec, path: str | Path) -> None:
