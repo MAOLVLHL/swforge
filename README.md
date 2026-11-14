@@ -337,8 +337,15 @@ second run into a clean directory reproduces them and leaves no documents open b
 ## Tests
 
 ```bash
-pytest        # 211 tests, no SolidWorks required
+pytest        # 249 tests, no SolidWorks required
 ```
+
+The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,
+extrude and cut calls a builder makes and replays them as a volume, so
+`test_every_builder_draws_the_volume_the_analytic_answer_promises` compares what `build()`
+would draw against what `analytic()` promised. The two halves of the contract therefore fail in
+the same run, and a builder that drops the second extrusion or cuts in the wrong direction goes
+red here rather than on the next real build.
 
 ## License
 
