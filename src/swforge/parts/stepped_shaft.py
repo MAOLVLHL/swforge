@@ -8,6 +8,18 @@ from __future__ import annotations
 from typing import Any
 
 from ..geometry import Solid, cylinder
+from ..params import Param
+
+#: Read by _validated(); spelled out rather than generated, so that a reader of
+#: schema() sees the six keys the docstring promises.
+PARAMS = (
+    Param("d1"),
+    Param("l1"),
+    Param("d2"),
+    Param("l2"),
+    Param("d3"),
+    Param("l3"),
+)
 
 
 def _validated(params: dict[str, Any]) -> list[tuple[float, float]]:

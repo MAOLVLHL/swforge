@@ -10,6 +10,19 @@ import math
 from typing import Any
 
 from ..geometry import Solid, annulus, cylinder
+from ..params import Param
+
+#: Read by _validated(); the bolt circle may be omitted for a plain flange.
+PARAMS = (
+    Param("outer_d"),
+    Param("hub_d"),
+    Param("plate_t"),
+    Param("hub_h"),
+    Param("bore_d"),
+    Param("bolt_d", required=False, default=0.0),
+    Param("bolt_count", required=False, default=4),
+    Param("bolt_circle_d", required=False, default=0.0),
+)
 
 
 def _validated(params: dict[str, Any]) -> dict[str, float]:

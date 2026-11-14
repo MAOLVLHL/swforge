@@ -6,6 +6,10 @@ from typing import Any
 
 from .. import catalog
 from ..geometry import Solid, annulus
+from ..params import Param
+
+#: Read by analytic() and build(); every dimension comes from the table.
+PARAMS = (Param("size", choices=tuple(catalog.WASHERS)),)
 
 
 def analytic(params: dict[str, Any]) -> Solid:

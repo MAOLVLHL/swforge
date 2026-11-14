@@ -6,6 +6,10 @@ from typing import Any
 
 from .. import catalog
 from ..geometry import Solid, hex_prism, hole, tap_drill
+from ..params import Param
+
+#: Read by analytic() and build(); every dimension comes from the table.
+PARAMS = (Param("size", choices=tuple(catalog.HEX_NUTS)),)
 
 
 def analytic(params: dict[str, Any]) -> Solid:

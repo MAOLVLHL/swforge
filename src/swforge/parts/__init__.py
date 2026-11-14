@@ -67,6 +67,10 @@ def _check_registry() -> None:
     mismatch: the type annotation promises it, the JSON schema advertises it,
     and the first person to ask for it gets a KeyError from deep inside a
     build.  Cheaper to refuse the import.
+
+    A builder that cannot describe its own parameters counts as disagreeing
+    too: schema() would publish a kind with an empty params list, and a form
+    built on that would silently omit every field the builder reads.
     """
     missing = sorted(set(KINDS) - set(PARTS))
     extra = sorted(set(PARTS) - set(KINDS))
@@ -74,6 +78,14 @@ def _check_registry() -> None:
         raise RuntimeError(
             "swforge.kinds and swforge.parts disagree: "
             f"no builder for {missing}, no kind for {extra}"
+        )
+    undeclared = sorted(
+        kind for kind, module in _MODULES.items() if not getattr(module, "PARAMS", ())
+    )
+    if undeclared:
+        raise RuntimeError(
+            "swforge.parts cannot describe these kinds: "
+            f"no PARAMS in {undeclared}"
         )
 
 
@@ -129,7 +141,9 @@ def schema() -> list[dict[str, Any]]:
 
     The summary is the first line of the builder's own docstring, so the
     documentation of a kind lives next to the geometry that has to honour it
-    rather than in a table that goes stale.
+    rather than in a table that goes stale.  The params list is the same idea
+    one level down: each builder declares the keys it reads, so the parameter
+    table cannot drift from the code that reads the dict either.
     """
     rows = []
     for kind in KINDS:
@@ -140,6 +154,7 @@ def schema() -> list[dict[str, Any]]:
                 "kind": kind,
                 "standard": is_standard(kind),
                 "summary": doc[0].strip() if doc else "",
+                "params": [param.describe() for param in module.PARAMS],
             }
         )
     return rows

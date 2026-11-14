@@ -6,6 +6,18 @@ import math
 from typing import Any
 
 from ..geometry import Solid, plate
+from ..params import Param
+
+#: Read by _validated(); a margin of 0 means "pick one from hole_d and thickness".
+PARAMS = (
+    Param("length"),
+    Param("width"),
+    Param("thickness"),
+    Param("hole_d"),
+    Param("rows", required=False, default=2),
+    Param("cols", required=False, default=3),
+    Param("margin", required=False, default=0.0),
+)
 
 
 def _validated(params: dict[str, Any]) -> dict[str, Any]:

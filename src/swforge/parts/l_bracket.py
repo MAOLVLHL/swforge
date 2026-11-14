@@ -21,6 +21,17 @@ import math
 from typing import Any
 
 from ..geometry import Solid, plate
+from ..params import Param
+
+#: Read by _validated(); hole_d of 0 disables drilling, so it may be omitted.
+PARAMS = (
+    Param("leg_a"),
+    Param("leg_b"),
+    Param("width"),
+    Param("thickness"),
+    Param("hole_d", required=False, default=0.0),
+    Param("holes_per_leg", required=False, default=2),
+)
 
 
 def _validated(params: dict[str, Any]) -> dict[str, float]:
