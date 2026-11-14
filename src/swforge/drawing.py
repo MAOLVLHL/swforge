@@ -103,10 +103,13 @@ class SwDrawing:
         found = member(sheet, "GetViews", default=()) or ()
         for view in found:
             if str(member(view, "Name", default="")) == view_name:
-                return (
-                    float(member(view, "ScaleRatio", default=0.0)),
-                    float(member(view, "ScaleRatio", default=0.0)),
-                )
+                # ScaleRatio is one two-element array.  Reading it twice, as
+                # this used to, hands back the same pair twice, so a 1:4 view
+                # reported itself as 1:1 to every caller.
+                ratio = member(view, "ScaleRatio", default=(1.0, 1.0))
+                if isinstance(ratio, (int, float)):
+                    return (float(ratio), 1.0)
+                return (float(ratio[0]), float(ratio[1]))
         raise SwError(f"no view named {view_name!r}")
 
     def annotations(self) -> None:
