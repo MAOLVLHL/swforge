@@ -11,6 +11,8 @@ skipped the pause.
 import ast
 from pathlib import Path
 
+import pytest
+
 from swforge import session
 from swforge.session import SwModel
 
@@ -106,3 +108,56 @@ def test_each_method_is_defined_once():
                 )
             seen[item.name] = item.lineno
     assert not duplicates, f"{SOURCE.name}: " + "; ".join(duplicates)
+
+
+class _Extension:
+    """Extension.SaveAs with scripted results, writing bytes when it succeeds."""
+
+    def __init__(self, results: list[bool], payload: bytes = b"fresh") -> None:
+        self.results = list(results)
+        self.payload = payload
+        self.calls: list[str] = []
+
+    def SaveAs(self, path: str, *args: object) -> bool:
+        self.calls.append(str(path))
+        ok = self.results.pop(0) if self.results else False
+        if ok:
+            Path(path).write_bytes(self.payload)
+        return ok
+
+
+def test_save_keeps_the_previous_file_when_the_retry_fails(
+    fake_app, doc_factory, tmp_path, fake_com
+):
+    target = tmp_path / "plate.sldprt"
+    target.write_bytes(b"last good save")
+    ext = _Extension([False, False])
+    with pytest.raises(session.SwError):
+        SwModel(doc_factory(Extension=ext), fake_app).save(target)
+    assert target.read_bytes() == b"last good save", (
+        "a save that fails twice must leave the file the user already had; "
+        "unlinking before the retry destroys the only copy when it fails too"
+    )
+    assert not (tmp_path / "plate.sldprt.bak").exists(), (
+        "after the restore the backup has moved back, so no stray copy may "
+        "be left next to the part"
+    )
+
+
+def test_save_drops_the_backup_when_the_retry_succeeds(
+    fake_app, doc_factory, tmp_path, fake_com
+):
+    target = tmp_path / "plate.sldprt"
+    target.write_bytes(b"old")
+    ext = _Extension([False, True])
+    SwModel(doc_factory(Extension=ext), fake_app).save(target)
+    assert target.read_bytes() == b"fresh", (
+        "closing the stale document and retrying is what the branch is for; "
+        "the retry has to win"
+    )
+    assert ext.calls == [str(target), str(target)], (
+        "SaveAs must be retried on the same path, once"
+    )
+    assert not (tmp_path / "plate.sldprt.bak").exists(), (
+        "the backup must not outlive a successful save"
+    )

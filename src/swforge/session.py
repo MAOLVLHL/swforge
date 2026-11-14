@@ -270,6 +270,40 @@ def close_document(app: Any, target: Any) -> bool:
     return False
 
 
+def _back_up(target: Path) -> Path | None:
+    """Move the file that is about to be overwritten out of the way.
+
+    Returns the backup path, or None when the move itself failed -- in which
+    case the original is still untouched and the caller retries over it.
+    """
+    backup = target.with_name(target.name + ".bak")
+    try:
+        target.replace(backup)
+    except OSError:
+        return None
+    return backup
+
+
+def _discard(backup: Path | None) -> None:
+    """Drop the backup once the new save is on disk."""
+    if backup is None:
+        return
+    try:
+        backup.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _restore(backup: Path | None, target: Path) -> None:
+    """Put the previous save back after a retry that failed too."""
+    if backup is None:
+        return
+    try:
+        backup.replace(target)
+    except OSError:
+        pass
+
+
 class SwModel:
     """One part document, plus the operations this library needs."""
 
@@ -476,20 +510,30 @@ class SwModel:
         errors = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
         warnings = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
         ok = self._save_as(target, errors, warnings)
+        kept: Path | None = None
         if not ok and target.exists():
             # swFileSaveError 1 means the file is already there.  When the old
             # document is still open it holds a lock on the file, so close that
             # document first, then retry once.
+            #
+            # The file is moved aside, never deleted: this branch is reached for
+            # *any* failure -- a full disk, an invalid path, another process
+            # holding the file -- so unlinking here would take the user's last
+            # good save with it whenever the retry failed as well.
             self.close_document_at(target)
-            try:
-                target.unlink(missing_ok=True)
-            except OSError:
-                pass
+            kept = _back_up(target)
             ok = self._save_as(target, errors, warnings)
+            if ok:
+                _discard(kept)
+                kept = None
+            else:
+                _restore(kept, target)
+                kept = kept if kept.exists() else None
         if not ok:
+            hint = f"; previous save kept at {kept}" if kept is not None else ""
             raise SwError(
                 f"save failed: {target} (errors={errors.value}, "
-                f"warnings={warnings.value})"
+                f"warnings={warnings.value}){hint}"
             )
         return target
 
