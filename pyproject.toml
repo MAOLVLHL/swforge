@@ -1,31 +1,42 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "swforge"
-version = "0.1.0"
+name = "swforge-cad"
+dynamic = ["version"]
 description = "Parametric SolidWorks parts and assemblies, verified against closed-form geometry"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "swforge contributors" }]
 keywords = ["solidworks", "cad", "parametric", "fasteners", "gb-standard"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Manufacturing",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Topic :: Scientific/Engineering",
 ]
 dependencies = []
 
 [project.optional-dependencies]
 com = ["pywin32>=306"]
+dev = ["pytest", "ruff"]
+
+[project.urls]
+Homepage = "https://github.com/MAOLVLHL/swforge"
+Repository = "https://github.com/MAOLVLHL/swforge"
+Issues = "https://github.com/MAOLVLHL/swforge/issues"
+Changelog = "https://github.com/MAOLVLHL/swforge/releases"
 
 [project.scripts]
 swforge = "swforge.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "swforge.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -36,3 +47,6 @@ addopts = "-q"
 # The package lives under src/, so put it on sys.path for the tests without
 # requiring an editable install first.
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 88

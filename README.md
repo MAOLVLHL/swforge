@@ -30,9 +30,20 @@ pip install -e .            # analytic half only, works on any OS
 pip install -e ".[com]"     # adds pywin32 so the SolidWorks half works
 ```
 
+The released distribution is called **`swforge-cad`** — `swforge` on PyPI is an unrelated
+project. The import name and the command stay `swforge`:
+
+```bash
+pip install swforge-cad             # analytic half
+pip install "swforge-cad[com]"      # plus pywin32, for driving SolidWorks
+```
+
 Requires Python 3.10+ and, for real modelling, a running SolidWorks instance on Windows.
 Importing the package never touches COM, so `swforge.parts`, `swforge.geometry` and
 `swforge.stack` are fully testable without SolidWorks.
+
+Releases are cut by tagging `v*`; see [RELEASING.md](RELEASING.md) for what the workflow
+checks before anything is uploaded.
 
 ## Quick start
 

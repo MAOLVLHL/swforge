@@ -1,0 +1,118 @@
+name: release
+
+# Every job here runs on the artefact that ships, not on the source tree: the
+# wheel is installed into a throwaway venv and driven through the console script
+# before anything is attached to a tag. The PyPI upload stays switched off until
+# the maintainer registers this repository as a trusted publisher -- a publish
+# job that fails on every tag trains people to ignore red.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the build tools
+        run: python -m pip install --upgrade pip build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: The metadata must survive a strict check
+        run: python -m twine check --strict dist/*
+
+      # A tag that says v0.1.1 over a wheel that says 0.1.0 is the classic way to
+      # ship the wrong bytes; refuse it before the upload, not after.
+      - name: The tag must be the version inside the artefact
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          ls -l dist/
+          test -f "dist/swforge_cad-${version}.tar.gz"
+          test -f "dist/swforge_cad-${version}-py3-none-any.whl"
+          echo "tag ${TAG} matches the packaged version ${version}"
+
+      # The analytic half is the half that has to work everywhere. If the console
+      # script cannot even print a plan without SolidWorks, the artefact is not
+      # worth uploading.
+      - name: The wheel must work where SolidWorks is not installed
+        working-directory: /tmp
+        run: |
+          python -m venv /tmp/wheelcheck
+          /tmp/wheelcheck/bin/pip install --quiet --no-index --find-links "$GITHUB_WORKSPACE/dist" swforge-cad
+          /tmp/wheelcheck/bin/python -c "import swforge; print('imported', swforge.__version__)"
+          /tmp/wheelcheck/bin/swforge catalog > catalog.txt
+          grep -c "GB/T 5783" catalog.txt
+          /tmp/wheelcheck/bin/swforge demo showcase.json
+          /tmp/wheelcheck/bin/swforge verify showcase.json
+          /tmp/wheelcheck/bin/swforge stack bolt_stack.json
+          /tmp/wheelcheck/bin/swforge verify bolt_stack.json --assembly
+          test -f showcase.json && test -f bolt_stack.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  github-release:
+    name: github release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Attach the artefacts to the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --repo "${{ github.repository }}" --generate-notes --verify-tag
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    # Off until a repository variable turns it on, because the upload only works
+    # after the trusted publisher exists on PyPI. See RELEASING.md.
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PYPI_TRUSTED_PUBLISHER == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/swforge-cad
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      # Trusted publishing: PyPI mints a short-lived token from this job's OIDC
+      # identity, so no long-lived password ever reaches the repository.
+      - name: Upload to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
