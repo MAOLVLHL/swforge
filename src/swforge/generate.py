@@ -175,6 +175,7 @@ def reuse_part(
     session: Any,
     spec: PartSpec,
     out_dir: str | Path = "build",
+    on_progress: Progress | None = None,
 ) -> BuildResult | None:
     """Verify a part that is already on disk instead of building it again.
 
@@ -182,6 +183,9 @@ def reuse_part(
     generate().  A resumed run reads the saved document, measures it and applies
     exactly the same closed-form check -- the numbers are re-derived, not
     trusted from a previous run, so a file edited by hand still has to survive.
+
+    *on_progress* gets one "part.reused" event, so a resumed run says which
+    parts it skipped instead of going quiet for the ones it did not build.
     """
     stem = Path(out_dir) / f"{spec.kind}_{spec.name}"
     part = stem.with_suffix(".sldprt")
@@ -202,6 +206,14 @@ def reuse_part(
         )
     finally:
         model.close()
+    emit(
+        on_progress,
+        "part.reused",
+        kind=spec.kind,
+        name=spec.name,
+        volume_mm3=round(result.measured_volume_mm3, 3),
+        ok=result.ok,
+    )
     result.files["part"] = str(part)
     step = stem.with_suffix(".step")
     if step.exists():
