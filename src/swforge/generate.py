@@ -411,6 +411,7 @@ def draw(
     out_dir: str | Path = "build",
     views: tuple[str, ...] = ("front", "top", "right", "iso"),
     sheet: str | None = None,
+    dimensions: bool = True,
 ) -> dict[str, str]:
     """Create a drawing for *model_path*, then export .slddrw and .pdf.
 
@@ -418,6 +419,11 @@ def draw(
     because CreateDrawViewFromModelView3 refuses those.  The orientations are
     stored on the model first, which is why this function reopens and activates
     it before touching the drawing.
+
+    Each view is dimensioned as soon as it is placed, because the drawing-level
+    AutoDimension only reaches the view SolidWorks holds active -- and that is
+    never the view just inserted.  Dimensioning them all after the loop instead
+    puts every dimension on the last view and leaves the others empty.
     """
     from .drawing import VIEW_FRONT, VIEW_ISOMETRIC, VIEW_RIGHT, VIEW_TOP
 
@@ -444,16 +450,21 @@ def draw(
         "iso": (190.0, 70.0),
     }
     placed: list[str] = []
+    dimensioned = 0
     for name in views:
         x, y = positions.get(name, (60.0, 120.0))
-        placed.append(
-            drawing.add_named_view(target, f"{DRAWING_VIEW_NAME}_{name}", x, y)
+        view_name = drawing.add_named_view(
+            target, f"{DRAWING_VIEW_NAME}_{name}", x, y
         )
+        placed.append(view_name)
+        if dimensions:
+            dimensioned += drawing.auto_dimension(view_name)
 
     stem = Path(out_dir) / f"drawing_{target.stem}"
     files = {"drawing": str(drawing.save(stem.with_suffix(".slddrw")))}
     files["pdf"] = str(drawing.export_pdf(stem.with_suffix(".pdf")))
     files["views"] = ", ".join(placed)
+    files["dimensions"] = str(dimensioned)
     # Close the drawing first: it holds the model open through its view
     # references, so the model goes second.  *model* here is the raw COM
     # document, so it needs the wrapper before it can be closed.

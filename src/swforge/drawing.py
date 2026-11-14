@@ -10,6 +10,13 @@ Two SolidWorks behaviours shape this module:
 * Every call acts on the active document, and a drawing created right after a
   model is not active.  SwSession.new_drawing returns a fresh document that is
   active already; a drawing opened by path must be activated first.
+
+Importing the model's dimensions is not an option here: InsertModelAnnotations3
+answers None and adds nothing on a model whose sketches were never dimensioned
+by hand, which is every model this library builds.  Drawing-level AutoDimension
+is what fills a sheet, and it only reaches the view that SolidWorks considers
+active -- so a view has to be dimensioned the moment it is created (see
+SwDrawing.auto_dimension).
 """
 
 from __future__ import annotations
@@ -18,6 +25,14 @@ from pathlib import Path
 from typing import Any
 
 from .session import SwError, _callout, _com, member
+
+#: swAutodimScheme_e: how the dimensions are laid out from the datum.
+AUTODIM_BASELINE = 1
+AUTODIM_ORDINATE = 2
+AUTODIM_CHAIN = 3
+
+#: swAutodimEntities_e: "all" rather than "what is preselected".
+AUTODIM_ALL_ENTITIES = 1
 
 #: swStandardViews_e values accepted by ShowNamedView2.
 VIEW_FRONT = 1
@@ -98,28 +113,80 @@ class SwDrawing:
         found = member(sheet, "GetViews", default=()) or ()
         return [str(member(v, "Name", default="")) for v in found]
 
-    def view_scale(self, view_name: str) -> tuple[float, float]:
+    def _view(self, view_name: str) -> Any:
+        """The view object whose Name is *view_name*.
+
+        The name has to come from SolidWorks (view.Name), not from the
+        orientation that was asked for: a view inserted as swforge_front is
+        called "Drawing View1" on the sheet, and ActivateView only answers to
+        the name SolidWorks gave it.
+        """
         sheet = self.sheet
         found = member(sheet, "GetViews", default=()) or ()
         for view in found:
             if str(member(view, "Name", default="")) == view_name:
-                # ScaleRatio is one two-element array.  Reading it twice, as
-                # this used to, hands back the same pair twice, so a 1:4 view
-                # reported itself as 1:1 to every caller.
-                ratio = member(view, "ScaleRatio", default=(1.0, 1.0))
-                if isinstance(ratio, (int, float)):
-                    return (float(ratio), 1.0)
-                return (float(ratio[0]), float(ratio[1]))
+                return view
         raise SwError(f"no view named {view_name!r}")
 
-    def annotations(self) -> None:
-        """Import the model's annotations (dimensions, notes).
+    def view_scale(self, view_name: str) -> tuple[float, float]:
+        view = self._view(view_name)
+        # ScaleRatio is one two-element array.  Reading it twice, as this used
+        # to, hands back the same pair twice, so a 1:4 view reported itself as
+        # 1:1 to every caller.
+        ratio = member(view, "ScaleRatio", default=(1.0, 1.0))
+        if isinstance(ratio, (int, float)):
+            return (float(ratio), 1.0)
+        return (float(ratio[0]), float(ratio[1]))
 
-        InsertModelAnnotations3 returns nothing at all on this binding; the
-        call is kept because it is harmless and some models do gain their
-        dimensions from it.
+    # -- dimensions -------------------------------------------------------
+    def dimension_count(self, view_name: str) -> int:
+        """How many dimensions appear on *view_name*; 0 means it carries none."""
+        count = member(self._view(view_name), "GetDisplayDimensionCount", default=0)
+        return int(count or 0)
+
+    def auto_dimension(
+        self,
+        view_name: str,
+        scheme: int = AUTODIM_BASELINE,
+        horizontal_placement: int = 1,
+        vertical_placement: int = 1,
+    ) -> int:
+        """Dimension *view_name* with SolidWorks' own auto-dimension, return how
+        many dimensions it gained.
+
+        InsertModelAnnotations3 would be the obvious way to put the model's
+        dimensions on a sheet, and it is a dead end: it answers None and leaves
+        every view at zero dimensions on a model whose sketches were never
+        dimensioned by hand -- which is every model built by this library.  The
+        drawing-level AutoDimension generates the dimensions from the view's
+        own projection instead, and it is the only thing that fills a sheet.
+
+        The catch is that it applies to the *active view*, and SolidWorks does
+        not make a newly created view active.  Activating all four views after
+        the fact does not work either: ActivateView answers True and names the
+        right view, but all the call's dimensions still land on the last view
+        that was created (front/top/right 0, iso 9, measured).  Creating a view
+        and dimensioning it immediately is the sequence that works
+        (front 4 / top 7 / right 4 / iso 6 on the same part).
         """
-        self.model.InsertModelAnnotations3(0, 1, True, True, False, False)
+        before = self.dimension_count(view_name)
+        self.activate_view(view_name)
+        self.model.AutoDimension(
+            AUTODIM_ALL_ENTITIES,
+            scheme,
+            horizontal_placement,
+            scheme,
+            vertical_placement,
+        )
+        return self.dimension_count(view_name) - before
+
+    def activate_view(self, view_name: str) -> None:
+        """Make *view_name* the view that AutoDimension acts on."""
+        if not self.model.ActivateView(view_name):
+            raise SwError(
+                f"cannot activate drawing view {view_name!r}; the name has to "
+                "be the one SolidWorks assigned, not the orientation"
+            )
 
     # -- output -----------------------------------------------------------
     def save(self, path: str | Path) -> Path:
