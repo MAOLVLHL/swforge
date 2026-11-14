@@ -300,7 +300,7 @@ second run into a clean directory reproduces them and leaves no documents open b
 ## Tests
 
 ```bash
-pytest        # 171 tests, no SolidWorks required
+pytest        # 177 tests, no SolidWorks required
 ```
 
 ## License
