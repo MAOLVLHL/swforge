@@ -256,3 +256,47 @@ def test_an_assembly_whose_parts_all_build_still_passes(monkeypatch):
     assert "mate 'plate-1'-'post-1' skipped" in " | ".join(result.notes), (
         "a mate naming a component that was never placed is reported, not raised"
     )
+
+
+def test_the_assembly_reports_every_phase_it_enters(monkeypatch):
+    """A ten-part assembly is silent for minutes if only parts are reported."""
+
+    def fake_generate(session, part_spec, **kwargs):
+        return SimpleNamespace(files={"part": rf"C:\out\{part_spec.kind}.sldprt"})
+
+    monkeypatch.setattr("swforge.generate.generate", fake_generate)
+    monkeypatch.setattr("swforge.generate._assembly_bbox", lambda assembly: (20.0, 20.0, 2.0))
+
+    seen = []
+    result = build_assembly(
+        FakeSession(), make_assembly_spec(), on_progress=lambda s, p: seen.append((s, p))
+    )
+
+    assert result.ok
+    assert [stage for stage, _ in seen] == [
+        "assembly.parts",
+        "assembly.inserting",
+        "assembly.mating",
+        "assembly.saving",
+        "assembly.closed",
+    ], "the phases are reported in the order they run, and closing comes last"
+    assert seen[0][1] == {"built": 2, "failed": 0}
+    assert seen[1][1] == {"components": 2}
+    assert seen[2][1] == {"mates": 2}, (
+        "two mates were declared; one of them is skipped later, and the event "
+        "reports what was attempted so that the wait is explainable"
+    )
+    assert seen[4][1] == {"name": "bracket", "files": 2}, (
+        "the .sldasm and its STEP are both on disk by the time the assembly closes"
+    )
+
+
+def test_progress_is_optional_and_absent_by_default(monkeypatch):
+    def fake_generate(session, part_spec, **kwargs):
+        return SimpleNamespace(files={"part": rf"C:\out\{part_spec.kind}.sldprt"})
+
+    monkeypatch.setattr("swforge.generate.generate", fake_generate)
+    monkeypatch.setattr("swforge.generate._assembly_bbox", lambda assembly: (20.0, 20.0, 2.0))
+
+    result = build_assembly(FakeSession(), make_assembly_spec())
+    assert result.ok, "a caller that never asked to watch still gets the build"
