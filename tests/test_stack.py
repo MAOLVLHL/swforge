@@ -185,3 +185,13 @@ def test_bolt_stack_flips_every_mate_to_keep_bolts_above_the_plate():
 def test_assembly_spec_is_json_serialisable():
     payload = json.dumps(bolt_stack().to_dict(), ensure_ascii=False)
     assert "bolt_stack" in payload
+
+
+def test_load_assembly_reads_a_file_that_starts_with_a_bom(tmp_path):
+    path = tmp_path / "stack.json"
+    payload = json.dumps(bolt_stack().to_dict(), ensure_ascii=False)
+    path.write_bytes(b"\xef\xbb\xbf" + payload.encode("utf-8"))
+    assert load_assembly(path).name == "bolt_stack", (
+        "an assembly spec written from PowerShell carries a BOM; reading it "
+        "as plain utf-8 raises Unexpected UTF-8 BOM before any of it is used"
+    )

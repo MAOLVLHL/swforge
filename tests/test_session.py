@@ -174,6 +174,51 @@ def test_session_ledger_closes_only_what_it_opened(fake_app, tmp_path, fake_com)
     assert sess.close_opened() == 0, "closing twice must not touch CloseDoc again"
 
 
+class _Recording:
+    """Extension.SaveAs that records the exact string it was handed."""
+
+    def __init__(self, ok: bool = True) -> None:
+        self.ok = ok
+        self.calls: list[str] = []
+
+    def SaveAs(self, path: str, *args: object) -> bool:
+        self.calls.append(str(path))
+        return self.ok
+
+
+def test_save_resolves_a_relative_target_before_reaching_com(
+    fake_app, doc_factory, tmp_path, fake_com, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    ext = _Recording()
+    model = SwModel(doc_factory(Extension=ext), fake_app)
+    returned = model.save("build/plate.sldprt")
+    assert ext.calls == [str(tmp_path / "build" / "plate.sldprt")], (
+        "Extension.SaveAs does not resolve: it is handed straight to "
+        "SolidWorks, which expands a relative path against its own working "
+        "directory -- the folder it was started from. 'swforge build "
+        "showcase.json -o build' therefore wrote into an unrelated directory "
+        "and failed with swFileSaveError 1. Got "
+        f"{ext.calls!r}."
+    )
+    assert returned == Path(str(tmp_path / "build" / "plate.sldprt")), (
+        "save() must return the path it actually wrote, or a caller joins a "
+        "relative name onto the wrong base"
+    )
+
+
+def test_export_step_resolves_a_relative_target(
+    fake_app, doc_factory, tmp_path, fake_com, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    ext = _Recording()
+    SwModel(doc_factory(Extension=ext), fake_app).export_step("build/plate.step")
+    assert ext.calls == [str(tmp_path / "build" / "plate.step")], (
+        "the STEP export has the same COM path rule as save(); a relative "
+        f"target lands under SolidWorks' cwd. Got {ext.calls!r}."
+    )
+
+
 def test_save_drops_the_backup_when_the_retry_succeeds(
     fake_app, doc_factory, tmp_path, fake_com
 ):

@@ -41,9 +41,20 @@ class PartSpec:
         return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)
 
 
+#: Encoding used to read a spec file.  "utf-8-sig" is utf-8 that also
+#: tolerates a byte-order mark, and it is the right default because the files
+#: this reads are hand-written: PowerShell's `Set-Content` and `Out-File` write
+#: a BOM by default on Windows, as does Notepad's "UTF-8" option.  `json.loads`
+#: refuses a BOM outright -- "Unexpected UTF-8 BOM (decode using utf-8-sig)" --
+#: so a spec that looks perfectly fine in an editor failed to load.  Reading is
+#: forgiving; writing stays plain utf-8, so the files this package produces are
+#: byte-identical everywhere.
+SPEC_ENCODING = "utf-8-sig"
+
+
 def load_specs(path: str | Path) -> list[PartSpec]:
     """Load a JSON file holding either one spec or a list of specs."""
-    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw = json.loads(Path(path).read_text(encoding=SPEC_ENCODING))
     items = raw if isinstance(raw, list) else [raw]
     return [PartSpec.from_dict(item) for item in items]
 
