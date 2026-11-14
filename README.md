@@ -187,6 +187,27 @@ they cost real debugging time and are documented so you do not pay for them agai
 - **`OpenDoc6` answers `errors=65536` for a file an open document still holds.** Reuse the open
   document instead of reopening it, or close it first.
 
+### One thread, one document at a time
+
+SolidWorks is a single-threaded COM server, and this library does not pretend otherwise. Every
+call in `swforge.session`, `swforge.assembly` and `swforge.drawing` happens on the thread that
+called in, and the CLI has no `--jobs`: there is nothing to gain from one. Two threads asking for
+a new document at the same time crashed `sldworks.exe` with `ucrtbase 0xc0000409` — an ordinary
+access violation in the runtime, with no exception on our side and no hint about the cause. The
+same build survives the same calls one at a time.
+
+Two things follow, and both are visible in the code:
+
+- **Closing is throttled on purpose.** `SwModel.close` pauses 0.25 s.
+  Closing a batch of documents back-to-back crashed the same way; one at a time with a short gap
+  is what the same build survives. If you write your own loop that calls `CloseDoc` directly, that
+  gap is yours to keep.
+- **There is no thread pool to add.** If a run of a hundred parts is too slow, the answer is more
+  `sldworks.exe` processes driven by a process pool — each with its own `SldWorks` instance and its
+  own output directory — not more threads in one. A thread would have to marshal every `IDispatch`
+  to the owning apartment to be safe, at which point the parallelism is gone and only the bugs
+  remain.
+
 ## Status
 
 Everything below ran on SolidWorks 2025 SP3.0 (build 33.3.0), not in a mock:
@@ -203,7 +224,7 @@ second run into a clean directory reproduces them and leaves no documents open b
 ## Tests
 
 ```bash
-pytest        # 125 tests, no SolidWorks required
+pytest        # 132 tests, no SolidWorks required
 ```
 
 ## License
