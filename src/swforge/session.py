@@ -572,12 +572,6 @@ class SwModel:
             )
         return target
 
-    def close(self, save: bool = False) -> None:
-        try:
-            self.app.CloseDoc(self.title)
-        except Exception:
-            pass
-
 
 class Sketch:
     """The currently open sketch; entities are added in millimetres."""
