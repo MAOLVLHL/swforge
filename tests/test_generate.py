@@ -300,3 +300,116 @@ def test_progress_is_optional_and_absent_by_default(monkeypatch):
 
     result = build_assembly(FakeSession(), make_assembly_spec())
     assert result.ok, "a caller that never asked to watch still gets the build"
+
+def _disk_part(tmp_path, kind="washer", name="washer_M8"):
+    stem = tmp_path / f"{kind}_{name}"
+    part = stem.with_suffix(".sldprt")
+    part.write_bytes(b"stand-in for a saved document")
+    return part
+
+
+class FakePartModel:
+    """The three calls reuse_part makes on an opened document."""
+
+    def __init__(self, volume_mm3=1000.0, box=(20.0, 20.0, 2.0)):
+        self.volume_mm3 = volume_mm3
+        self.box = box
+        self.closed = False
+
+    def measure(self):
+        return SimpleNamespace(volume_mm3=self.volume_mm3)
+
+    def bbox_mm(self):
+        return self.box
+
+    def close(self):
+        self.closed = True
+
+
+def test_a_part_already_on_disk_is_measured_and_reported_as_reused(
+    tmp_path, monkeypatch
+):
+    """The whole point of --resume: read the file, re-derive the verdict, say so."""
+    from swforge import generate
+
+    spec = SimpleNamespace(tolerance=0.01, kind="washer", name="washer_M8", params={})
+    part = _disk_part(tmp_path)
+    (tmp_path / "washer_washer_M8.step").write_bytes(b"step")
+
+    monkeypatch.setattr(
+        generate.parts,
+        "analytic",
+        lambda kind, params: SimpleNamespace(volume_mm3=1000.0, bbox_mm=(20.0, 20.0, 2.0)),
+    )
+
+    model = FakePartModel()
+
+    class Session:
+        def open_part(self, path):
+            assert path == part, "resume_part opens the file it just found"
+            return model
+
+    events = []
+    result = generate.reuse_part(
+        Session(), spec, out_dir=str(tmp_path), on_progress=lambda s, p: events.append((s, p))
+    )
+
+    assert result is not None
+    assert model.closed, "the document is closed even when the measurement disagrees"
+    assert result.ok
+    assert result.volume_error == 0.0
+    assert result.files["part"] == str(part)
+    assert result.files["step"] == str(tmp_path / "washer_washer_M8.step")
+    assert result.notes == ["verified from disk, not rebuilt"]
+    assert events == [
+        (
+            "part.reused",
+            {"kind": "washer", "name": "washer_M8", "volume_mm3": 1000.0, "ok": True},
+        )
+    ], "a resumed part must announce itself instead of going quiet"
+
+
+def test_a_hand_edited_part_still_has_to_survive_the_check(tmp_path, monkeypatch):
+    """Resume re-measures; it never trusts the numbers from the earlier run."""
+    from swforge import generate
+
+    spec = SimpleNamespace(tolerance=0.01, kind="washer", name="washer_M8", params={})
+    _disk_part(tmp_path)
+    monkeypatch.setattr(
+        generate.parts,
+        "analytic",
+        lambda kind, params: SimpleNamespace(volume_mm3=1000.0, bbox_mm=(20.0, 20.0, 2.0)),
+    )
+
+    events = []
+
+    class Session:
+        def open_part(self, path):
+            return FakePartModel(volume_mm3=1500.0)
+
+    result = generate.reuse_part(
+        Session(), spec, out_dir=str(tmp_path), on_progress=lambda s, p: events.append((s, p))
+    )
+
+    assert not result.ok, "a file that no longer matches its spec is not reusable as-is"
+    assert result.measured_volume_mm3 == 1500.0
+    assert events[0][1]["ok"] is False
+
+
+def test_a_missing_part_is_not_an_error_and_says_nothing(tmp_path):
+    """None is the signal to build it; a resumed run must not report a stage for it."""
+    from swforge import generate
+
+    spec = SimpleNamespace(tolerance=0.01, kind="washer", name="washer_M8", params={})
+    events = []
+
+    class Session:
+        def open_part(self, path):  # pragma: no cover - must not be reached
+            raise AssertionError("a missing file is not opened")
+
+    result = generate.reuse_part(
+        Session(), spec, out_dir=str(tmp_path), on_progress=lambda s, p: events.append((s, p))
+    )
+
+    assert result is None
+    assert events == []

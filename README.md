@@ -72,10 +72,35 @@ result = build_assembly(
 )
 ```
 
-Stages are `part.building`, `part.built`, `part.saved`, then `assembly.parts`,
+Stages are `part.building`, `part.built`, `part.saved`, `part.reused`, then `assembly.parts`,
 `assembly.inserting`, `assembly.mating`, `assembly.saving`, `assembly.closed`. The library itself
 never prints and never configures logging — a callback that raises is logged and the build
 continues, because a broken progress bar must not destroy the work it is reporting on.
+
+### Picking up where a run stopped
+
+Eight parts is several minutes, and a run that dies on the seventh should not cost you the six
+that already passed. Both `build` and `assemble` take `--resume`:
+
+```bash
+swforge build showcase.json -o build --resume
+```
+
+A part already sitting in the output directory is opened, measured and checked against its
+closed-form answer exactly like a freshly built one — the numbers are re-derived, not remembered,
+so a file edited by hand still has to survive the comparison. Only a part that is missing gets
+built. A part that exists but cannot be read is reported as `[SKIP]` and built instead, because a
+stale file is a reason to build, not a reason to lose the run.
+
+For an assembly, `--resume` checks each component part the same way and prints
+`resumed 3/5 parts from disk` before it opens the assembly:
+
+```bash
+swforge assemble bolt_stack.json -o build --resume
+```
+
+From Python the same shortcut is `reuse_part` returning a result, or `parts_done=` on
+`build_assembly` — which is what `examples/build_showcase.py` has always done by hand.
 
 ## Parts
 
@@ -230,7 +255,7 @@ second run into a clean directory reproduces them and leaves no documents open b
 ## Tests
 
 ```bash
-pytest        # 132 tests, no SolidWorks required
+pytest        # 145 tests, no SolidWorks required
 ```
 
 ## License

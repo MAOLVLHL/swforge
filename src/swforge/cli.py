@@ -6,11 +6,11 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from . import catalog, parts
 from .demo import bolt_stack, showcase
-from .generate import build_assembly, draw, generate
+from .generate import build_assembly, draw, generate, reuse_part
 from .spec import PartSpec, dump_specs, load_specs
 from .stack import AssemblySpec, dump_assembly, load_assembly
 
@@ -38,6 +38,11 @@ def _build_parser() -> argparse.ArgumentParser:
     build.add_argument("--no-step", action="store_true", help="skip STEP export")
     build.add_argument("--dry-run", action="store_true", help="only print the plan")
     build.add_argument(
+        "--resume",
+        action="store_true",
+        help="verify parts already in the output directory instead of rebuilding them",
+    )
+    build.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -49,6 +54,11 @@ def _build_parser() -> argparse.ArgumentParser:
     assemble.add_argument("-o", "--out", default="build", help="output directory")
     assemble.add_argument("--no-step", action="store_true", help="skip STEP export")
     assemble.add_argument("--dry-run", action="store_true", help="only print the plan")
+    assemble.add_argument(
+        "--resume",
+        action="store_true",
+        help="verify parts already in the output directory instead of rebuilding them",
+    )
     assemble.add_argument(
         "-v",
         "--verbose",
@@ -115,8 +125,33 @@ def _attach():
     return session
 
 
+def _resume_parts(session, specs: Sequence[PartSpec], out: str) -> dict[str, Any]:
+    """Verify the parts already in *out*; return the ones that were reusable.
+
+    Keyed by spec name, which is what build_assembly keys *parts_done* by.  A
+    part whose file is missing or unreadable is left out, so the caller falls
+    back to building it -- resuming must never lose a part that a real build
+    would have produced.
+    """
+    done: dict[str, Any] = {}
+    for spec in specs:
+        try:
+            result = reuse_part(session, spec, out_dir=out)
+        except Exception as error:  # noqa: BLE001 - a bad file is not a lost run
+            print(f"[SKIP] {spec.kind}/{spec.name}: {type(error).__name__}: {error}")
+            continue
+        if result is not None:
+            done[spec.name] = result
+    return done
+
+
 def _build_specs(
-    session, specs: Sequence[PartSpec], out: str, export_step: bool
+    session,
+    specs: Sequence[PartSpec],
+    out: str,
+    export_step: bool,
+    resume: bool = False,
+    parts_done: dict[str, Any] | None = None,
 ) -> int:
     """Build every spec, isolating the ones that fail; return the failure count.
 
@@ -124,11 +159,26 @@ def _build_specs(
     batch can give: every spec after it never even started.  Now the error is
     printed where it happened and the loop moves on, so the run still ends with
     one verdict per spec it was given.
+
+    *resume* verifies the part already sitting in *out* instead of extruding it
+    again; *parts_done* is the same shortcut keyed by name, for a caller that
+    has already measured the parts it cares about.
     """
+    reusable = parts_done or {}
     failures = 0
     for spec in specs:
+        result = reusable.get(spec.name)
+        if result is None and resume:
+            try:
+                result = reuse_part(session, spec, out_dir=out)
+            except Exception as error:  # noqa: BLE001 - a stale file is not a lost run
+                print(f"[SKIP] {spec.kind}/{spec.name}: {type(error).__name__}: {error}")
+                result = None
         try:
-            result = generate(session, spec, out_dir=out, export_step=export_step)
+            if result is None:
+                result = generate(
+                    session, spec, out_dir=out, export_step=export_step
+                )
         except Exception as error:  # noqa: BLE001 - one spec must not stop the rest
             failures += 1
             print(f"[FAIL] {spec.kind}/{spec.name}: {type(error).__name__}: {error}")
@@ -190,11 +240,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         session = _attach()
         if session is None:
             return 2
+        parts_done = {}
+        if args.resume:
+            parts_done = _resume_parts(
+                session, list(assembly.parts.values()), args.out
+            )
+            print(f"resumed {len(parts_done)}/{len(assembly.parts)} parts from disk")
         result = build_assembly(
             session,
             assembly,
             out_dir=args.out,
             export_step=not args.no_step,
+            parts_done=parts_done,
         )
         print(result.summary())
         for key, path in result.files.items():
@@ -226,5 +283,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if session is None:
         return 2
 
-    failures = _build_specs(session, specs, args.out, not args.no_step)
+    failures = _build_specs(
+        session, specs, args.out, not args.no_step, resume=args.resume
+    )
     return 0 if failures == 0 else 1
