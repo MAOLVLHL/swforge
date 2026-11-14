@@ -49,3 +49,40 @@ def test_assemble_dry_run_does_not_touch_solidworks(tmp_path, capsys):
     dump_assembly(bolt_stack(), target)
     assert main(["assemble", str(target), "--dry-run"]) == 0
     assert "bolt-4" in capsys.readouterr().out
+
+def test_one_bad_spec_does_not_stop_the_batch(monkeypatch, tmp_path, capsys):
+    from types import SimpleNamespace
+
+    from swforge import cli
+    from swforge.session import SwError
+
+    specs = [
+        SimpleNamespace(kind="plate", name="a"),
+        SimpleNamespace(kind="hex_bolt", name="b"),
+        SimpleNamespace(kind="plate", name="c"),
+    ]
+    seen = []
+
+    def fake_generate(session, spec, out_dir=None, export_step=True):
+        seen.append(spec.name)
+        if spec.name == "b":
+            raise SwError("no drawing template")
+        return SimpleNamespace(
+            summary=lambda: f"[PASS] {spec.kind}/{spec.name}",
+            files={},
+            notes=[],
+            ok=True,
+            bbox_errors={},
+        )
+
+    monkeypatch.setattr(cli, "generate", fake_generate)
+    failures = cli._build_specs(object(), specs, str(tmp_path), export_step=True)
+
+    assert seen == ["a", "b", "c"], (
+        "the spec after the failing one must still be built"
+    )
+    assert failures == 1
+    out = capsys.readouterr().out
+    assert "[FAIL] hex_bolt/b: SwError: no drawing template" in out
+    assert "[PASS] plate/c" in out
+    assert "2/3 parts verified" in out

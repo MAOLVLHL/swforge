@@ -83,6 +83,37 @@ def _attach():
     return session
 
 
+def _build_specs(
+    session, specs: Sequence[PartSpec], out: str, export_step: bool
+) -> int:
+    """Build every spec, isolating the ones that fail; return the failure count.
+
+    A single bad part used to end the whole batch, which is the worst answer a
+    batch can give: every spec after it never even started.  Now the error is
+    printed where it happened and the loop moves on, so the run still ends with
+    one verdict per spec it was given.
+    """
+    failures = 0
+    for spec in specs:
+        try:
+            result = generate(session, spec, out_dir=out, export_step=export_step)
+        except Exception as error:  # noqa: BLE001 - one spec must not stop the rest
+            failures += 1
+            print(f"[FAIL] {spec.kind}/{spec.name}: {type(error).__name__}: {error}")
+            continue
+        print(result.summary())
+        for key, path in result.files.items():
+            print(f"    {key}: {path}")
+        for note in result.notes:
+            print(f"    note: {note}")
+        if not result.ok:
+            failures += 1
+            if result.bbox_errors:
+                print(f"    bbox errors (mm): {result.bbox_errors}")
+    print(f"{len(specs) - failures}/{len(specs)} parts verified")
+    return failures
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -153,21 +184,5 @@ def main(argv: Sequence[str] | None = None) -> int:
     if session is None:
         return 2
 
-    failures = 0
-    for spec in specs:
-        result = generate(
-            session,
-            spec,
-            out_dir=args.out,
-            export_step=not args.no_step,
-        )
-        print(result.summary())
-        for key, path in result.files.items():
-            print(f"    {key}: {path}")
-        if not result.ok:
-            failures += 1
-            if result.bbox_errors:
-                print(f"    bbox errors (mm): {result.bbox_errors}")
-
-    print(f"{len(specs) - failures}/{len(specs)} parts verified")
+    failures = _build_specs(session, specs, args.out, not args.no_step)
     return 0 if failures == 0 else 1
