@@ -775,3 +775,162 @@ def test_a_missing_part_is_not_an_error_and_says_nothing(tmp_path):
 
     assert result is None
     assert events == []
+
+
+class CountingPartModel:
+    """A part document that remembers how many times it was closed."""
+
+    def __init__(self):
+        self.closes = 0
+        self.saved: str | None = None
+        self.events: list[str] = []
+
+    def measure(self):
+        return SimpleNamespace(volume_mm3=1000.0)
+
+    def bbox_mm(self):
+        return (20.0, 20.0, 2.0)
+
+    def save(self, path):
+        self.saved = str(path)
+        self.events.append("save")
+        return path
+
+    def export_step(self, path):
+        self.events.append("export_step")
+        return path
+
+    def close(self):
+        self.closes += 1
+        self.events.append("close")
+
+
+def _part_spec():
+    return SimpleNamespace(
+        tolerance=0.01, kind="washer", name="washer_M8", params={"size": "M8"}
+    )
+
+
+def _counting_session():
+    models = []
+
+    class Session:
+        def new_part(self):
+            model = CountingPartModel()
+            models.append(model)
+            return model
+
+    return Session(), models
+
+
+def _stub_part_build(monkeypatch, expected_volume=1000.0):
+    from swforge import generate
+
+    monkeypatch.setattr(generate.parts, "build", lambda model, kind, params: None)
+    monkeypatch.setattr(
+        generate.parts,
+        "analytic",
+        lambda kind, params: SimpleNamespace(
+            volume_mm3=expected_volume, bbox_mm=(20.0, 20.0, 2.0)
+        ),
+    )
+
+
+def test_a_step_only_build_still_closes_the_document_it_created(tmp_path, monkeypatch):
+    """save_part=False skips the .sldprt, not the cleanup.
+
+    A caller exporting STEP alone kept one document per part resident in the
+    user's SolidWorks session, and close_opened() could not mop up because its
+    ledger only knows the documents the session itself opened.
+    """
+    from swforge.generate import generate
+
+    _stub_part_build(monkeypatch)
+    session, models = _counting_session()
+
+    result = generate(session, _part_spec(), out_dir=str(tmp_path), save_part=False)
+
+    assert "part" not in result.files, "no .sldprt was asked for"
+    assert "step" in result.files
+    assert models[0].closes == 1, "the document the STEP export left behind is closed"
+
+
+def test_a_build_that_saves_the_part_closes_it_exactly_once(tmp_path, monkeypatch):
+    """The guard was the only thing keeping the count at one; it is now the close."""
+    from swforge.generate import generate
+
+    _stub_part_build(monkeypatch)
+    session, models = _counting_session()
+
+    generate(session, _part_spec(), out_dir=str(tmp_path))
+
+    assert models[0].saved is not None
+    assert models[0].closes == 1
+
+
+def test_a_build_that_never_reaches_the_save_still_closes(tmp_path, monkeypatch):
+    """The close lives in a finally, so a refused build cannot leak the document."""
+    from swforge import generate
+
+    _stub_part_build(monkeypatch)
+
+    def refuse(model, kind, params):
+        raise SwError("FeatureExtrusion3 returned Nothing")
+
+    monkeypatch.setattr(generate.parts, "build", refuse)
+    session, models = _counting_session()
+
+    with pytest.raises(SwError):
+        generate.generate(session, _part_spec(), out_dir=str(tmp_path))
+
+    assert models[0].closes == 1
+
+def test_the_document_is_closed_after_the_files_are_written(tmp_path, monkeypatch):
+    """Closing first would pull the document out from under an export in flight."""
+    from swforge.generate import generate
+
+    _stub_part_build(monkeypatch)
+    session, models = _counting_session()
+
+    generate(session, _part_spec(), out_dir=str(tmp_path))
+
+    assert models[0].events == ["save", "export_step", "close"], models[0].events
+
+
+def test_a_step_only_export_writes_before_it_closes(tmp_path, monkeypatch):
+    """The same order holds when the only file asked for is the STEP."""
+    from swforge.generate import generate
+
+    _stub_part_build(monkeypatch)
+    session, models = _counting_session()
+
+    generate(session, _part_spec(), out_dir=str(tmp_path), save_part=False)
+
+    assert models[0].events == ["export_step", "close"], models[0].events
+
+def test_an_assembly_forwards_save_parts_to_every_part_it_builds(monkeypatch):
+    """The issue's leak is reachable from the library: this is the call that passes it on."""
+    seen = []
+
+    def fake_generate(session, part_spec, **kwargs):
+        seen.append((part_spec.kind, kwargs.get("save_part")))
+        return SimpleNamespace(files={"part": rf"C:\out\{part_spec.kind}.sldprt"})
+
+    monkeypatch.setattr("swforge.generate.generate", fake_generate)
+    monkeypatch.setattr("swforge.generate._assembly_bbox", lambda assembly: (20.0, 20.0, 2.0))
+
+    build_assembly(FakeSession(), make_assembly_spec(), save_parts=False)
+
+    assert seen == [("plate", False), ("hex_bolt", False)], seen
+
+def test_a_part_only_build_closes_even_with_the_step_turned_off(tmp_path, monkeypatch):
+    """The close answers to neither flag: both exports are optional, the cleanup is not."""
+    from swforge.generate import generate
+
+    _stub_part_build(monkeypatch)
+    session, models = _counting_session()
+
+    result = generate(session, _part_spec(), out_dir=str(tmp_path), export_step=False)
+
+    assert list(result.files) == ["part"]
+    assert models[0].closes == 1, "no export at all still leaves a document to close"
