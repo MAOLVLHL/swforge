@@ -366,7 +366,7 @@ out, which is what keeps a long running session from accumulating open documents
 ## Tests
 
 ```bash
-pytest        # 322 tests, no SolidWorks required
+pytest        # 342 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,

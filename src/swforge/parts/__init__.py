@@ -12,6 +12,7 @@ and refuses to import if it does not.
 
 from __future__ import annotations
 
+import difflib
 from typing import Any, Callable
 
 from ..geometry import Solid
@@ -108,8 +109,34 @@ def check_kind(kind: str) -> None:
         raise KeyError(f"unknown part kind {kind!r}; known: {', '.join(KINDS)}")
 
 
+def _reject_unknown(kind: str, params: dict[str, Any]) -> None:
+    """Raise ParamError naming every key this kind does not read.
+
+    A misspelled key used to be dropped on the floor: the builder fell back to
+    the default for the key the author meant, and the analytic answer fell back
+    with it, so the volume check -- the one thing that is supposed to catch a
+    wrong part -- agreed and reported PASS.  PARAMS is the only list of keys a
+    kind reads (tests/test_params.py holds it equal to what the builder really
+    looks up), so a key outside it is a typo rather than an extension point.
+    """
+    declared = {param.name for param in _MODULES[kind].PARAMS}
+    unknown = sorted(set(params) - declared, key=str)
+    if not unknown:
+        return
+    named = []
+    for key in unknown:
+        close = difflib.get_close_matches(str(key), sorted(declared), n=1)
+        named.append(f"{key!r} (did you mean {close[0]!r}?)" if close else repr(key))
+    what = "these parameters" if len(unknown) > 1 else "this parameter"
+    raise ParamError(
+        f"{kind} does not take {what}: {', '.join(named)}; "
+        f"it takes {', '.join(sorted(declared))}"
+    )
+
+
 def analytic(kind: str, params: dict[str, Any]) -> Solid:
     check_kind(kind)
+    _reject_unknown(kind, params)
     filler, _ = PARTS[kind]
     try:
         return filler(params)
@@ -124,6 +151,7 @@ def analytic(kind: str, params: dict[str, Any]) -> Solid:
 
 def build(model: Any, kind: str, params: dict[str, Any]) -> None:
     check_kind(kind)
+    _reject_unknown(kind, params)
     _, builder = PARTS[kind]
     try:
         builder(model, params)
