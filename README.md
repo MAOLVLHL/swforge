@@ -64,6 +64,12 @@ expands a relative path against its own working directory, so until this was fix
 above wrote into whatever folder the application was started from and failed with
 `save failed: build\washer_M8.sldprt (errors=1, warnings=0)`.)
 
+A save that fails while the file is already there is retried once, after the document holding it is
+closed: the old file is moved to `<name>.bak`, the retry runs, and the backup is dropped on
+success or moved back on failure. Only when that move back is refused too does the error end with
+`; previous save kept at <name>.bak`, which is the one case where the part you had is no longer at
+its own path.
+
 A run of eight parts takes minutes, so `build` and `assemble` accept `-v` to log every stage to
 stderr as it starts:
 
@@ -360,7 +366,7 @@ out, which is what keeps a long running session from accumulating open documents
 ## Tests
 
 ```bash
-pytest        # 316 tests, no SolidWorks required
+pytest        # 322 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,

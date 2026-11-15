@@ -572,7 +572,13 @@ class SwModel:
                 kept = None
             else:
                 _restore(kept, target)
-                kept = kept if kept.exists() else None
+                # _back_up() answers None when it could not move the file
+                # aside, and _restore() then returns without doing anything --
+                # so the backup is missing for two different reasons, and
+                # asking a None for .exists() raised AttributeError out of a
+                # save that was already failing.  A save that ends badly owes
+                # the caller SwError, with the target and the counters in it.
+                kept = kept if kept is not None and kept.exists() else None
         if not ok:
             hint = f"; previous save kept at {kept}" if kept is not None else ""
             raise SwError(
