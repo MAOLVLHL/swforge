@@ -1,0 +1,64 @@
+name: issue-triage
+
+# A cheap, read-mostly pass on every new issue: label it, and ask for the one thing that
+# is actually missing. It never writes code, never touches a PR, never closes an issue.
+# Skipped (with a warning) while no API key is configured, so the issue list stays clean.
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+concurrency:
+  group: triage-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check that the bot has credentials
+        id: gate
+        env:
+          API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$API_KEY" ] && [ -z "$OAUTH" ]; then
+            echo "::warning::ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN is not configured - skipping."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.ready == 'true'
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.gate.outputs.ready == 'true'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --max-turns 12
+            --allowedTools "mcp__github__get_issue,mcp__github__list_issues,mcp__github__search_issues,mcp__github__create_issue_comment,mcp__github__update_issue"
+          prompt: |
+            Triage issue #${{ github.event.issue.number }} in ${{ github.repository }}.
+
+            1. Apply at most two labels from the set that already exists (bug, enhancement,
+               documentation, question). Never create a new label.
+            2. This project only accepts a bug report it can reproduce. If the issue has no
+               spec JSON, no "swforge" command that was run, no traceback, and no
+               expected-versus-actual volume or bounding box, post exactly one comment asking
+               for the specific missing item -- name the command or the field, do not paste a
+               checklist and do not ask for everything at once.
+            3. If it duplicates an existing issue, link the original and apply "duplicate".
+            4. Never modify code, never open a pull request, never close the issue.
+
+            Keep any comment under 120 words, in the language the reporter used.

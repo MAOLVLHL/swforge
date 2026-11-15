@@ -1,0 +1,81 @@
+name: claude
+
+# Hand an issue to Claude Code. Two triggers, both narrow on purpose:
+#   1. somebody with write access comments "@claude ..." on the issue,
+#   2. somebody with write access adds the "ai:go" label.
+# The action re-checks write access on every run; a drive-by commenter cannot start it.
+#
+# Until ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN) exists, the gate step below
+# reports a warning and skips the job, so a missing secret never turns into a red X
+# on an unrelated issue.
+
+on:
+  issue_comment:
+    types: [created]
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+  actions: read
+
+concurrency:
+  group: claude-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request == null &&
+       contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'issues' &&
+       ((github.event.action == 'labeled' && github.event.label.name == 'ai:go') ||
+        (github.event.action == 'opened' &&
+         (contains(github.event.issue.body || '', '@claude') ||
+          contains(github.event.issue.title, '@claude')))))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check that the bot has credentials
+        id: gate
+        env:
+          API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$API_KEY" ] && [ -z "$OAUTH" ]; then
+            echo "::warning::ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN is not configured - skipping."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.ready == 'true'
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.ready == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Install the package and the test runner
+        if: steps.gate.outputs.ready == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest ruff
+
+      - name: Run the agent
+        if: steps.gate.outputs.ready == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --max-turns 40
+            --allowedTools "Bash(python -m pytest:*),Bash(python -m pytest),Bash(ruff check:*),Bash(git diff:*),Bash(git status:*),Bash(git log:*),Read,Write,Edit,Glob,Grep"
+            --system-prompt "You work in swforge per AGENTS.md: Python 3.10 syntax only, no COM import at module load, tests extend tests/fakecom.py instead of skipping, conventional-commit PR titles, under 600 added lines. Quote file:line evidence, keep the pytest summary line real, and comment instead of opening a PR when the report cannot be reproduced."
