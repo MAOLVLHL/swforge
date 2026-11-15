@@ -131,6 +131,19 @@ def washer(designation: str) -> WasherSize:
     return _lookup(WASHERS, designation.upper(), "GB/T 97.1 washers")
 
 
+def nut_bore(designation: str) -> float:
+    """The through hole of a hex nut, in millimetres.
+
+    Models here are threadless on purpose (see geometry.tap_drill), so the bore
+    cannot be the tap drill 0.85*d: that diameter leaves material for a thread
+    that is never cut, and it is smaller than the bolt the nut is catalogued
+    for, which makes every nut refuse its own bolt.  The plain washer's inner
+    diameter is the clearance series this table already carries, and it is what
+    a nut is drilled to, so the two share a bore.
+    """
+    return washer(designation).inner
+
+
 def socket_screw(designation: str) -> SocketScrewSize:
     return _lookup(
         SOCKET_SCREWS, designation.upper(), "GB/T 70.1 socket head cap screws"

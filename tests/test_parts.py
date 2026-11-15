@@ -31,10 +31,10 @@ def test_hex_bolt_is_head_plus_shank():
     assert z == pytest.approx(13.0)
 
 
-def test_hex_nut_is_a_prism_minus_the_tapped_hole():
+def test_hex_nut_is_a_prism_minus_the_clearance_bore():
     solid = parts.analytic("hex_nut", {"size": "M8"})
     prism = math.sqrt(3) / 2 * 13**2 * 6.8
-    hole = math.pi / 4 * (0.85 * 8) ** 2 * 6.8
+    hole = math.pi / 4 * 8.4**2 * 6.8
     assert solid.volume_mm3 == pytest.approx(prism - hole)
 
 
@@ -189,3 +189,24 @@ def test_build_reports_bad_parameters_the_same_way_as_analytic():
         parts.build(object(), "washer", {"size": 8})
     assert "washer cannot use these parameters" in str(excinfo.value)
 
+
+def test_every_nut_can_pass_the_bolt_it_is_catalogued_for():
+    """A threadless nut must be bored for the shank, not for a thread that is absent.
+
+    The tap drill is 0.85*d, which leaves material for a thread this library
+    never models -- so every nut was 0.2*d too small and refused its own bolt.
+    """
+    from swforge import catalog
+
+    for designation in catalog.HEX_NUTS:
+        bore = catalog.nut_bore(designation)
+        bolt = catalog.hex_bolt(designation)
+        assert bore > bolt.d, f"{designation}: bore {bore} does not clear d {bolt.d}"
+
+
+def test_the_nut_bore_is_the_washer_inner_diameter_it_shares_a_size_with():
+    """One clearance series, not two: a nut and its washer read the same bore."""
+    from swforge import catalog
+
+    for designation in catalog.HEX_NUTS:
+        assert catalog.nut_bore(designation) == catalog.washer(designation).inner
