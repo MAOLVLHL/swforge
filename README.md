@@ -352,7 +352,7 @@ second run into a clean directory reproduces them and leaves no documents open b
 ## Tests
 
 ```bash
-pytest        # 260 tests, no SolidWorks required
+pytest        # 272 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,
@@ -361,6 +361,12 @@ extrude and cut calls a builder makes and replays them as a volume, so
 would draw against what `analytic()` promised. The two halves of the contract therefore fail in
 the same run, and a builder that drops the second extrusion or cuts in the wrong direction goes
 red here rather than on the next real build.
+
+The assembly envelope is covered the same way. `_assembly_bbox()` maps each component's body box
+through that component's own placement before the boxes are unioned — the fix for a 127.51 mm
+assembly that had been reported against a predicted 120.00 — and `tests/test_assembly_bbox.py`
+drives the real function over turned and unturned components, so the union cannot quietly go back
+to reading part coordinates.
 
 ## License
 
