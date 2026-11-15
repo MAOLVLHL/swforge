@@ -166,13 +166,18 @@ def generate(
         emit(on_progress, "part.saved", kind=spec.kind, name=spec.name, files=len(result.files))
         return result
     finally:
-        # Close as soon as the files are written.  Leaving documents open is
-        # not free: nineteen of them accumulate over one showcase run and the
-        # next run starts on top of that, which slows SolidWorks and heats the
-        # machine for a document nobody reads again.  SwModel.close() paces the
-        # closes, because closing a batch back-to-back crashed this build.
-        if save_part:
-            model.close()
+        # Close as soon as the files are written, whether or not one of them was
+        # a .sldprt.  Leaving documents open is not free: nineteen of them
+        # accumulate over one showcase run and the next run starts on top of
+        # that, which slows SolidWorks and heats the machine for a document
+        # nobody reads again.  The close used to sit inside "if save_part", so
+        # the STEP-only mode -- build_assembly's save_parts=False reaches it at
+        # :280 -- leaked one document per part and left SwSession.close_opened()
+        # nothing to clean up, because its ledger only records documents the
+        # session opened.  SwModel.close() no-ops on a document it cannot name
+        # (session.py:601-605) and paces the closes, because closing a batch
+        # back-to-back crashed this build.
+        model.close()
 
 
 def reuse_part(
