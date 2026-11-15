@@ -132,11 +132,15 @@ def test_save_keeps_the_previous_file_when_the_retry_fails(
     target = tmp_path / "plate.sldprt"
     target.write_bytes(b"last good save")
     ext = _Extension([False, False])
-    with pytest.raises(session.SwError):
+    with pytest.raises(session.SwError) as raised:
         SwModel(doc_factory(Extension=ext), fake_app).save(target)
     assert target.read_bytes() == b"last good save", (
         "a save that fails twice must leave the file the user already had; "
         "unlinking before the retry destroys the only copy when it fails too"
+    )
+    assert "previous save kept at" not in str(raised.value), (
+        "the backup moved back onto the target, so pointing at the .bak would "
+        f"send the user to a path that no longer exists. Got {raised.value!r}"
     )
     assert not (tmp_path / "plate.sldprt.bak").exists(), (
         "after the restore the backup has moved back, so no stray copy may "
@@ -235,4 +239,122 @@ def test_save_drops_the_backup_when_the_retry_succeeds(
     )
     assert not (tmp_path / "plate.sldprt.bak").exists(), (
         "the backup must not outlive a successful save"
+    )
+
+class _Blocked:
+    """SaveAs that fails twice and leaves a directory where the file goes.
+
+    The second attempt is the one that matters: after the previous file has
+    been moved aside, a save that fails *again* has to put it back, and this
+    fake makes that move impossible so the "previous save kept at" branch is
+    reachable without an antivirus or a second SolidWorks process.
+    """
+
+    def __init__(self, target: Path) -> None:
+        self.target = target
+        self.calls = 0
+
+    def SaveAs(self, path: str, *args: object) -> bool:
+        self.calls += 1
+        if self.calls == 2:
+            self.target.mkdir()
+        return False
+
+
+def test_a_save_that_cannot_move_the_old_file_aside_still_raises_sw_error(
+    fake_app, doc_factory, tmp_path, fake_com
+):
+    target = tmp_path / "plate.sldprt"
+    target.write_bytes(b"last good save")
+    (tmp_path / "plate.sldprt.bak").mkdir()
+    with pytest.raises(session.SwError) as raised:
+        SwModel(doc_factory(Extension=_Extension([False, False])), fake_app).save(
+            target
+        )
+    assert str(target) in str(raised.value) and "(errors=" in str(raised.value), (
+        "when the backup cannot be moved the retry still fails, and the caller "
+        "has to hear it as a save failure naming the target and the counters; "
+        f"it heard {raised.value!r} instead"
+    )
+    assert target.read_bytes() == b"last good save", (
+        "the move failing means the original never left, so the user's file "
+        "has to be exactly as it was"
+    )
+
+
+def test_a_failed_retry_names_the_backup_it_kept(
+    fake_app, doc_factory, tmp_path, fake_com
+):
+    target = tmp_path / "plate.sldprt"
+    target.write_bytes(b"last good save")
+    with pytest.raises(session.SwError) as raised:
+        SwModel(doc_factory(Extension=_Blocked(target)), fake_app).save(target)
+    backup = tmp_path / "plate.sldprt.bak"
+    assert f"previous save kept at {backup}" in str(raised.value), (
+        "the file was moved aside and could not be moved back, so the only "
+        "copy left is the .bak; the message has to say where it is or the user "
+        f"searches for a part that looks deleted. Got {raised.value!r}"
+    )
+    assert backup.read_bytes() == b"last good save", (
+        "the kept copy is the whole point of the hint"
+    )
+
+
+def test_close_document_answers_false_without_an_application(tmp_path):
+    assert session.close_document(None, tmp_path / "plate.sldprt") is False, (
+        "the handle can already be dead when the save fails, and asking a None "
+        "application for its documents would turn a failing save into a "
+        "TypeError"
+    )
+
+
+def test_close_document_closes_only_the_file_it_was_asked_about(
+    fake_app, doc_factory, tmp_path
+):
+    target = tmp_path / "plate.sldprt"
+    fake_app.docs = [
+        doc_factory(path=""),
+        doc_factory(path=str(tmp_path / "other.sldprt")),
+        doc_factory(path=str(target)),
+    ]
+    assert session.close_document(fake_app, target) is True, (
+        "a document that was saved to the target is exactly what the retry "
+        "needs closed"
+    )
+    assert fake_app.closed == [str(target.resolve())], (
+        "the user's own documents and the untitled ones have to be left alone; "
+        f"closed {fake_app.closed!r}"
+    )
+
+
+def test_close_document_reports_a_close_that_raised(fake_app, doc_factory, tmp_path):
+    target = tmp_path / "plate.sldprt"
+    fake_app.docs = [doc_factory(path=str(target))]
+
+    def refuse(what: str) -> None:
+        raise RuntimeError("CloseDoc refused")
+
+    fake_app.CloseDoc = refuse
+    assert session.close_document(fake_app, target) is False, (
+        "CloseDoc failing is not the save's problem to crash on: the retry "
+        "still runs, and a False here keeps the reason in the save error"
+    )
+
+
+def test_the_rollback_helpers_keep_quiet_when_the_file_system_refuses(tmp_path):
+    backup = tmp_path / "plate.sldprt.bak"
+    backup.mkdir()
+    session._discard(backup)
+    session._discard(None)
+    assert backup.is_dir(), (
+        "a backup that cannot be unlinked is left alone: the save already "
+        "succeeded, and raising here would report success as a failure"
+    )
+    target = tmp_path / "plate.sldprt"
+    target.write_bytes(b"last good save")
+    session._restore(None, target)
+    session._restore(tmp_path / "gone.bak", target)
+    assert target.read_bytes() == b"last good save", (
+        "restoring without a backup, or with one that has already moved, must "
+        "not touch the file that is there"
     )
