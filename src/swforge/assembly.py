@@ -425,8 +425,14 @@ class SwAssembly:
 
         errors = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
         warnings = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
-        if not self.ext.SaveAs(
-            str(target), 0, 1, _callout(pythoncom), errors, warnings
-        ):
-            raise SwError(f"STEP export failed: {target}")
+        ok = self.ext.SaveAs(str(target), 0, 1, _callout(pythoncom), errors, warnings)
+        if not ok:
+            # Same shape as SwModel.export_step: SolidWorks answers False and
+            # puts the reason in these two counters (swFileSaveError_e: 1 is a
+            # file an open document still holds, 2 a path it cannot write).
+            # Dropping them left the caller with a path and no cause.
+            raise SwError(
+                f"STEP export failed: {target} (errors={errors.value}, "
+                f"warnings={warnings.value})"
+            )
         return target

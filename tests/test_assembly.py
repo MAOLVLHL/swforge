@@ -38,9 +38,31 @@ class FakeAsmModel:
         self.mass_property = None
         self.SketchManager = None
         self.FeatureManager = None
+        #: Scripted answers for the next SaveAs calls: a bool is returned, an
+        #: Exception raised, and a (result, errors, warnings) tuple returned
+        #: after writing those counters into the by-ref VARIANTs the caller
+        #: passed.  Empty means True.
+        self.save_as_plan: list = []
+        self.saved: list[str] = []
         self.Extension = SimpleNamespace(
-            SelectByID2=self._select, CreateMassProperty=None
+            SelectByID2=self._select,
+            CreateMassProperty=None,
+            SaveAs=self._save_as,
         )
+
+    def _save_as(self, path, *args):
+        self.saved.append(str(path))
+        if not self.save_as_plan:
+            return True
+        step = self.save_as_plan.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        if isinstance(step, tuple):
+            result, errors, warnings = step
+            args[3].value = errors
+            args[4].value = warnings
+            return result
+        return step
 
     def _select(self, *args):
         self.selected.append(args)
@@ -200,6 +222,37 @@ def test_assembly_without_an_app_refuses_to_open_parts(tmp_path):
     asmb = SwAssembly(FakeAsmModel(), None)
     with pytest.raises(SwError, match="not bound to a SolidWorks instance"):
         asmb.load_part(tmp_path / "bolt.sldprt")
+
+
+def test_export_step_resolves_the_target_before_reaching_com(
+    fake_app, tmp_path, fake_com, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    asmb = SwAssembly(FakeAsmModel(), fake_app)
+    returned = asmb.export_step("build/stack.step")
+    assert asmb.model.saved == [str(tmp_path / "build" / "stack.step")], (
+        "Extension.SaveAs does not resolve: a relative target lands under the "
+        "SolidWorks process cwd, not next to the assembly"
+    )
+    assert returned == Path(str(tmp_path / "build" / "stack.step")), (
+        "the caller joins the result onto other paths, so it has to be the "
+        "path that was actually written"
+    )
+
+
+def test_export_step_reports_the_counters_solidworks_refused_with(
+    fake_app, tmp_path, fake_com
+):
+    asmb = SwAssembly(FakeAsmModel(), fake_app)
+    asmb.model.save_as_plan = [(False, 1, 0)]
+    with pytest.raises(SwError, match=r"STEP export failed") as caught:
+        asmb.export_step(tmp_path / "stack.step")
+    assert "(errors=1, warnings=0)" in str(caught.value), (
+        "SaveAs answers False and puts the reason in the two by-ref counters "
+        "(swFileSaveError_e 1 is a file an open document still holds); the "
+        "part path reports them, so the assembly path must not throw them "
+        f"away. Got {str(caught.value)!r}"
+    )
 
 
 def make_doc_with_bodies(path: str):
