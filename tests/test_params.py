@@ -155,3 +155,104 @@ def test_the_schema_rows_survive_a_json_round_trip():
         "a tuple left in a row would serialise as a list on the way out and "
         "compare unequal on the way back"
     )
+
+#: One declared key per kind, and the typo a person makes on it: the last letter
+#: doubled, which is one keystroke away and still close enough for difflib.
+TYPOS = {
+    "hex_bolt": "size",
+    "hex_nut": "size",
+    "washer": "size",
+    "socket_screw": "size",
+    "l_bracket": "leg_a",
+    "multi_hole_plate": "margin",
+    "stepped_shaft": "d1",
+    "flange": "outer_d",
+}
+
+
+def typo(kind: str) -> tuple[str, str]:
+    """The (wrong key, right key) pair used by the two tests below."""
+    right = TYPOS[kind]
+    return right + right[-1], right
+
+
+@pytest.mark.parametrize("kind", parts.KINDS)
+def test_a_misspelled_key_is_refused_and_the_neighbour_is_suggested(kind):
+    """A typo used to fall back to the default, so the volume check agreed.
+
+    Silent default substitution is the one failure a volume comparison cannot
+    see: the builder and the analytic answer both read the substituted value
+    and report PASS, so a plate drilled with margin 12 instead of 25 verifies.
+    """
+    wrong, right = typo(kind)
+    params = dict(showcase_params()[kind], **{wrong: 1})
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.analytic(kind, params)
+    message = str(excinfo.value)
+    assert repr(wrong) in message, f"{kind}: the message has to name the key typed"
+    assert f"did you mean {right!r}" in message, (
+        f"{kind}: {wrong!r} is one keystroke from {right!r}, and saying so is the "
+        f"whole point of the message; got {message!r}"
+    )
+
+
+@pytest.mark.parametrize("kind", parts.KINDS)
+def test_build_refuses_the_same_key_before_it_touches_the_model(kind):
+    """A typo must fail before a document exists, not halfway through a build."""
+    wrong, _ = typo(kind)
+    params = dict(showcase_params()[kind], **{wrong: 1})
+
+    class Untouchable:
+        def __getattr__(self, name):
+            raise AssertionError(f"build() reached the model before validating: {name}")
+
+    with pytest.raises(parts.ParamError):
+        parts.build(Untouchable(), kind, params)
+
+
+def test_the_message_lists_every_unknown_key_and_the_whole_declaration():
+    params = {
+        "length": 120,
+        "width": 80,
+        "thickness": 6,
+        "hole_d": 9,
+        "margine": 25,
+        "colour": "red",
+    }
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.analytic("multi_hole_plate", params)
+    message = str(excinfo.value)
+    assert "'colour'" in message and "'margine'" in message, (
+        "one round trip should report every typo, not just the first"
+    )
+    for name in ("length", "width", "thickness", "hole_d", "rows", "cols", "margin"):
+        assert name in message, f"the message has to say what the kind does take: {name}"
+
+
+def test_a_key_with_no_neighbours_is_reported_without_a_guess():
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.analytic("hex_nut", {"size": "M8", "zzzzzzzzzz": 1})
+    message = str(excinfo.value)
+    assert "'zzzzzzzzzz'" in message
+    assert "did you mean" not in message, (
+        "a suggestion this far from every declared key would be noise"
+    )
+
+
+def test_every_declared_key_is_still_accepted():
+    """The guard must not reject a key a builder really reads."""
+    for kind in parts.KINDS:
+        assert parts.analytic(kind, dict(showcase_params()[kind])).volume_mm3 > 0
+
+
+def test_a_key_that_only_differs_in_case_is_still_unknown():
+    """The builders index with the exact spelling, so a case slip is a typo.
+
+    Accepting it in the guard would move the failure one frame down, where it
+    reads as a missing parameter -- the opposite of what went wrong.
+    """
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.analytic("hex_nut", {"Size": "M8"})
+    message = str(excinfo.value)
+    assert "'Size'" in message, message
+    assert "did you mean 'size'" in message, message
