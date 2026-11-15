@@ -698,14 +698,22 @@ class Sketch:
     def polygon(
         self, x_mm: float, z_mm: float, across_flats_mm: float, sides: int = 6
     ) -> Any:
-        """Regular polygon whose *across-flats* distance is given.
+        """Regular polygon sized by the distance across its flats.
 
-        CreatePolygon takes the circumradius when inscribed is True, and the
-        across-flats distance is sqrt(3) * r for a hexagon.
+        *across_flats_mm* is the one measurement the caller has -- the spanner
+        size, the socket size, the dimension printed on the drawing -- while
+        CreatePolygon takes the circumradius when inscribed is True.  The flat
+        of a regular n-gon sits r * cos(pi / n) from the centre, so the two are
+        related by r = across_flats / (2 * cos(pi / n)).  For a hexagon that is
+        the familiar across_flats / sqrt(3); for any other side count it is not,
+        and reusing the hexagon's constant (or, worse, 1/2) draws a smaller
+        profile than the caller asked for without raising anything.
         """
-        circumradius = (
-            across_flats_mm / math.sqrt(3.0) if sides == 6 else across_flats_mm / 2.0
-        )
+        if sides < 3:
+            raise ValueError(
+                f"a regular polygon needs at least 3 sides, got {sides!r}"
+            )
+        circumradius = across_flats_mm / (2.0 * math.cos(math.pi / sides))
         return self.model.sm.CreatePolygon(
             x_mm / 1000.0, z_mm / 1000.0, 0.0,
             circumradius / 1000.0, 0.0, 0.0,

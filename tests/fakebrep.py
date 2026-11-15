@@ -42,12 +42,10 @@ class Loop:
         if self.shape == "polygon":
             _, _, across_flats, sides = self.args
             count = int(sides)
-            # CreatePolygon takes the circumradius; a hexagon's across-flats
-            # distance is sqrt(3) * r, which is the conversion the Sketch class
-            # applies before the call.
-            radius = (
-                across_flats / math.sqrt(3.0) if count == 6 else across_flats / 2.0
-            )
+            # The builder states the distance across the flats, which is what a
+            # caller knows; the area needs the circumradius the Sketch class
+            # derives from it, r = across_flats / (2 * cos(pi / n)).
+            radius = across_flats / (2.0 * math.cos(math.pi / count))
             return count / 2.0 * radius**2 * math.sin(2.0 * math.pi / count)
         if self.shape == "rectangle":
             x0, z0, x1, z1 = self.args
