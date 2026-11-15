@@ -347,12 +347,15 @@ Everything below ran on SolidWorks 2025 SP3.0 (build 33.3.0), not in a mock:
 | drawing | 4 views, 21 auto-dimensions, `.slddrw` and `.pdf` written |
 
 `examples/build_showcase.py` is the run that produces those numbers, and it is repeatable: a
-second run into a clean directory reproduces them and leaves no documents open behind it.
+second run into a clean directory reproduces them and leaves no documents open behind it. That
+holds for the runs that fail too — a locked `.slddrw`, a PDF export SolidWorks refuses, a view
+that will not place: the drawing and the model it holds both go back to the session on the way
+out, which is what keeps a long running session from accumulating open documents.
 
 ## Tests
 
 ```bash
-pytest        # 286 tests, no SolidWorks required
+pytest        # 292 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,
