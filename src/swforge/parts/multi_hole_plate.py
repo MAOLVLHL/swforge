@@ -37,11 +37,15 @@ def _validated(params: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("rows and cols must be at least 1")
     if values["margin"] <= 0:
         values["margin"] = max(values["hole_d"], 2 * values["thickness"])
+    _check_holes_fit(values, _layout(values))
     return values
 
 
 def hole_positions(params: dict[str, Any]) -> list[tuple[float, float]]:
-    v = _validated(params)
+    return _layout(_validated(params))
+
+
+def _layout(v: dict[str, Any]) -> list[tuple[float, float]]:
     xs = _spread(v["margin"], v["length"] - v["margin"], v["cols"])
     zs = _spread(v["margin"], v["width"] - v["margin"], v["rows"])
     return [(x, z) for z in zs for x in xs]
@@ -52,6 +56,41 @@ def _spread(start: float, end: float, count: int) -> list[float]:
         return [(start + end) / 2.0]
     step = (end - start) / (count - 1)
     return [start + step * index for index in range(count)]
+
+
+def _check_holes_fit(v: dict[str, Any], positions: list[tuple[float, float]]) -> None:
+    """Refuse a drill pattern SolidWorks cannot cut.
+
+    A hole that reaches past the outline, or into its neighbour, is dropped: the
+    sketch keeps the loop, the extrude silently skips it, and the analytic answer
+    then promises material the build never removes.  Both cases are arithmetic on
+    numbers this module already has, so the check runs before any sketch exists.
+    """
+    hole_d = v["hole_d"]
+    radius = hole_d / 2.0
+    for x, z in positions:
+        if (
+            x - radius < 0
+            or x + radius > v["length"]
+            or z - radius < 0
+            or z + radius > v["width"]
+        ):
+            raise ValueError(
+                f"the {hole_d:g} mm hole at ({round(x, 3):g}, {round(z, 3):g}) "
+                f"breaks out of the "
+                f"{v['length']:g} x {v['width']:g} mm plate: it spans "
+                f"{round(x - radius, 3):g} .. {round(x + radius, 3):g} mm in x and "
+                f"{round(z - radius, 3):g} .. {round(z + radius, 3):g} mm in z"
+            )
+    for index, (x0, z0) in enumerate(positions):
+        for x1, z1 in positions[index + 1 :]:
+            distance = math.hypot(x1 - x0, z1 - z0)
+            if distance < hole_d:
+                raise ValueError(
+                    f"the {hole_d:g} mm holes at ({round(x0, 3):g}, "
+                    f"{round(z0, 3):g}) and ({round(x1, 3):g}, {round(z1, 3):g}) "
+                    f"are {round(distance, 3):g} mm apart"
+                )
 
 
 def analytic(params: dict[str, Any]) -> Solid:

@@ -210,3 +210,209 @@ def test_the_nut_bore_is_the_washer_inner_diameter_it_shares_a_size_with():
 
     for designation in catalog.HEX_NUTS:
         assert catalog.nut_bore(designation) == catalog.washer(designation).inner
+
+
+def test_plate_rejects_a_hole_that_breaks_out_of_the_outline():
+    # margin 2 puts a hole centre at (2, 2); a 9 mm hole there spans -2.5 .. 6.5
+    # mm, so SolidWorks drops the loop and the extrude cuts nothing -- while
+    # analytic() still subtracts 9 mm worth of material from the plate.
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic(
+            "multi_hole_plate",
+            {
+                "length": 20,
+                "width": 20,
+                "thickness": 5,
+                "hole_d": 9,
+                "rows": 3,
+                "cols": 3,
+                "margin": 2,
+            },
+        )
+    message = str(excinfo.value)
+    assert "the 9 mm hole at (2, 2) breaks out of the 20 x 20 mm plate" in message
+    assert "-2.5 .. 6.5 mm in x" in message
+
+
+def test_plate_rejects_two_holes_that_overlap():
+    # 19 mm holes on a 13.333 mm pitch are one slot, not two holes: the sketch
+    # keeps both loops but the cut removes less than the arithmetic subtracts.
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic(
+            "multi_hole_plate",
+            {
+                "length": 60,
+                "width": 60,
+                "thickness": 5,
+                "hole_d": 19,
+                "rows": 4,
+                "cols": 4,
+                "margin": 10,
+            },
+        )
+    assert "the 19 mm holes at (10, 10) and (23.333, 10) are 13.333 mm apart" in str(
+        excinfo.value
+    )
+
+
+def test_plate_accepts_a_hole_whose_edge_lands_on_the_outline():
+    # A 9 mm hole centred 4.5 mm from the edge touches the outline without
+    # crossing it, which SolidWorks cuts without complaint.
+    params = {
+        "length": 100,
+        "width": 20,
+        "thickness": 5,
+        "hole_d": 9,
+        "rows": 1,
+        "cols": 2,
+        "margin": 4.5,
+    }
+    assert parts.analytic("multi_hole_plate", params).volume_mm3 > 0
+
+
+@pytest.mark.parametrize(
+    "length, width, rows, cols, margin, span",
+    [
+        (100, 20, 1, 2, 4.4, "-0.1 .. 8.9 mm in x"),
+        (100, 20, 1, 2, 95.6, "91.1 .. 100.1 mm in x"),
+        (20, 100, 2, 1, 4.4, "-0.1 .. 8.9 mm in z"),
+        (20, 100, 2, 1, 95.6, "91.1 .. 100.1 mm in z"),
+    ],
+)
+def test_plate_rejects_a_hole_that_crosses_one_edge(
+    length, width, rows, cols, margin, span
+):
+    """Each of the four sides is checked on its own, on the hole's edge.
+
+    A test that only ever breaks the same corner cannot tell which of the four
+    comparisons the code actually makes.
+    """
+    params = {
+        "length": length,
+        "width": width,
+        "thickness": 5,
+        "hole_d": 9,
+        "rows": rows,
+        "cols": cols,
+        "margin": margin,
+    }
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic("multi_hole_plate", params)
+    assert span in str(excinfo.value)
+
+
+def test_plate_still_accepts_the_showcase_grid():
+    """The default margin is exactly what makes a grid feasible, so keep it."""
+    for spec in showcase():
+        if spec.kind in {"multi_hole_plate", "flange"}:
+            assert parts.analytic(spec.kind, spec.params).volume_mm3 > 0
+
+
+def test_flange_rejects_bolt_holes_that_overlap_the_bore():
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic(
+            "flange",
+            {
+                "outer_d": 100,
+                "hub_d": 62,
+                "plate_t": 12,
+                "hub_h": 8,
+                "bore_d": 50,
+                "bolt_d": 20,
+                "bolt_count": 4,
+                "bolt_circle_d": 55,
+            },
+        )
+    message = str(excinfo.value)
+    assert "the 20 mm bolt holes reach 17.5 mm from the centre" in message
+    assert "inside the 50 mm bore" in message
+
+
+def test_flange_rejects_bolt_holes_that_run_past_the_rim():
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic(
+            "flange",
+            {
+                "outer_d": 100,
+                "hub_d": 62,
+                "plate_t": 12,
+                "hub_h": 8,
+                "bore_d": 50,
+                "bolt_d": 11,
+                "bolt_count": 4,
+                "bolt_circle_d": 96,
+            },
+        )
+    message = str(excinfo.value)
+    assert "the 11 mm bolt holes reach 53.5 mm from the centre" in message
+    assert "past the 100 mm rim" in message
+
+
+def test_flange_rejects_bolt_holes_that_meet_each_other():
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic(
+            "flange",
+            {
+                "outer_d": 300,
+                "hub_d": 62,
+                "plate_t": 12,
+                "hub_h": 8,
+                "bore_d": 50,
+                "bolt_d": 11,
+                "bolt_count": 40,
+                "bolt_circle_d": 100,
+            },
+        )
+    assert "40 bolt holes 11 mm across sit 7.846 mm apart" in str(excinfo.value)
+
+
+def test_flange_rejects_a_bolt_diameter_with_no_bolts():
+    # bolt_count=0 removes no material in the build but subtracts a negative
+    # count in the arithmetic, i.e. it adds plate that was never there.
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic(
+            "flange",
+            {
+                "outer_d": 100,
+                "hub_d": 62,
+                "plate_t": 12,
+                "hub_h": 8,
+                "bore_d": 50,
+                "bolt_d": 11,
+                "bolt_count": 0,
+                "bolt_circle_d": 78,
+            },
+        )
+    assert "a 11 mm bolt hole needs at least one hole, got bolt_count=0" in str(
+        excinfo.value
+    )
+
+
+def test_flange_rejects_a_plate_that_is_not_there():
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic(
+            "flange",
+            {
+                "outer_d": 100,
+                "hub_d": 62,
+                "plate_t": -6,
+                "hub_h": 8,
+                "bore_d": 50,
+            },
+        )
+    assert "plate_t must be positive, got -6.0" in str(excinfo.value)
+
+
+def test_flange_rejects_a_hub_that_is_not_there():
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic(
+            "flange",
+            {
+                "outer_d": 100,
+                "hub_d": 62,
+                "plate_t": 12,
+                "hub_h": 0,
+                "bore_d": 50,
+            },
+        )
+    assert "hub_h must be positive, got 0.0" in str(excinfo.value)

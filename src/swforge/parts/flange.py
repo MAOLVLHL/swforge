@@ -42,7 +42,50 @@ def _validated(params: dict[str, Any]) -> dict[str, float]:
         raise ValueError("hub cannot be larger than the flange")
     if v["bolt_d"] and not (v["bore_d"] < v["bolt_circle_d"] < v["outer_d"]):
         raise ValueError("bolt circle must sit between the bore and the rim")
+    for key in ("plate_t", "hub_h"):
+        if v[key] <= 0:
+            raise ValueError(f"{key} must be positive, got {v[key]}")
+    if v["bolt_d"]:
+        _check_bolt_holes(v)
     return v
+
+
+def _check_bolt_holes(v: dict[str, float]) -> None:
+    """Refuse a bolt pattern SolidWorks cannot cut between the bore and the rim.
+
+    A hole that overlaps the bore or runs past the rim is dropped from the sketch,
+    yet analytic() subtracts it anyway, so a build that cut nothing still reports
+    the volume the analytic answer promised.  bolt_count <= 0 is the same failure
+    one step earlier: range() yields no holes while the arithmetic subtracts a
+    negative count, which adds material instead of removing it.
+    """
+    bolt_d = v["bolt_d"]
+    count = int(v["bolt_count"])
+    if count < 1:
+        raise ValueError(
+            f"a {bolt_d:g} mm bolt hole needs at least one hole, "
+            f"got bolt_count={count}"
+        )
+    radius = v["bolt_circle_d"] / 2.0
+    inner = radius - bolt_d / 2.0
+    if inner <= v["bore_d"] / 2.0:
+        raise ValueError(
+            f"the {bolt_d:g} mm bolt holes reach {round(inner, 3):g} mm from the "
+            f"centre, inside the {v['bore_d']:g} mm bore"
+        )
+    outer = radius + bolt_d / 2.0
+    if outer >= v["outer_d"] / 2.0:
+        raise ValueError(
+            f"the {bolt_d:g} mm bolt holes reach {round(outer, 3):g} mm from the "
+            f"centre, past the {v['outer_d']:g} mm rim"
+        )
+    if count > 1:
+        gap = 2.0 * radius * math.sin(math.pi / count)
+        if gap < bolt_d:
+            raise ValueError(
+                f"{count} bolt holes {bolt_d:g} mm across sit {round(gap, 3):g} mm "
+                f"apart on the {v['bolt_circle_d']:g} mm bolt circle"
+            )
 
 
 def bolt_positions(params: dict[str, Any]) -> list[tuple[float, float]]:

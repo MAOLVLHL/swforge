@@ -135,14 +135,23 @@ $ swforge build m7.json
 error: spec 'b': 'M7' is not in GB/T 5783 hex bolts; known sizes: M10, M12, M16, M20, M6, M8
 $ swforge build badsize.json
 error: spec 'w': washer cannot use these parameters: 'int' object has no attribute 'upper'
+$ swforge verify too_tight.json
+error: spec 'plate': the 9 mm hole at (2, 2) breaks out of the 20 x 20 mm plate: it spans -2.5 .. 6.5 mm in x and -2.5 .. 6.5 mm in z
 ```
 
-The last one is the case a schema check cannot catch: the file is valid JSON, the key is
+The wrong-size one is the case a schema check cannot catch: the file is valid JSON, the key is
 spelled right, and the value is simply not a size. `swforge.parts` raises `ParamError` (a
 `ValueError`) for it, so the sentence names the kind instead of leaking the
 `AttributeError` that `upper()` raised three frames down. `assemble --dry-run` runs the same
 check over every part of an assembly, so a stack that cannot be built is refused before
 SolidWorks opens a document.
+
+The impossible plate is the case the analytic answer cannot catch on its own: it used to print
+`V= -862.8 mm3` and exit 0. A hole that crosses the outline, two holes that meet, a bolt circle
+that runs into the bore or past the rim: SolidWorks drops the loop, cuts nothing, and the
+arithmetic goes on subtracting material that is still there. The plate and the flange now measure
+their own layout — the numbers in the message are the hole's span in millimetres, not just its
+centre — so `verify` reports the shape it cannot machine instead of a negative volume.
 
 2 means the run never started — a path you typed wrong, a file Notepad saved with a byte-order
 mark, a kind you misspelled, a parameter you left out, an assembly with no parts. 1 still means a
@@ -366,7 +375,7 @@ out, which is what keeps a long running session from accumulating open documents
 ## Tests
 
 ```bash
-pytest        # 351 tests, no SolidWorks required
+pytest        # 371 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,
