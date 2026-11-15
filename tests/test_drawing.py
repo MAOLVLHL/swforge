@@ -51,6 +51,13 @@ class FakeDrawingModel:
         self.saved: list[str] = []
         self.exported: list[str] = []
         self.save_ok = True
+        #: Scripted answers for the next SaveAs calls, consumed in order.  A bool
+        #: is returned as-is, an Exception is raised, and a (result, errors,
+        #: warnings) tuple is returned *after* writing those two counter values
+        #: into the by-ref VARIANTs the caller passed.  Empty means "answer
+        #: save_ok".
+        self.save_as_plan: list = []
+        self.save_as_args: list[tuple] = []
         # AutoDimension only ever touches the *active* view, so the fake has to
         # keep one; *gain* is how many dimensions a call invents.
         self.gain = gain
@@ -94,7 +101,20 @@ class FakeDrawingModel:
 
     def _save_as(self, path, *args):
         self.saved.append(path)
-        return self.save_ok
+        self.save_as_args.append(args)
+        if not self.save_as_plan:
+            return self.save_ok
+        step = self.save_as_plan.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        if isinstance(step, tuple):
+            result, errors, warnings = step
+            # The last two positional arguments are the [out] counters, which is
+            # the only channel SolidWorks reports the reason through.
+            args[3].value = errors
+            args[4].value = warnings
+            return result
+        return step
 
     def _export_data(self, path, *args):
         self.exported.append(path)
@@ -157,6 +177,56 @@ def test_save_blames_a_locked_file_only_when_the_file_exists(tmp_path, fake_com)
         drawing.save(existing)
     with pytest.raises(SwError, match="save failed:"):
         drawing.save(tmp_path / "new.SLDDRW")
+
+
+def test_export_pdf_returns_the_target_the_first_attempt_wrote(tmp_path, fake_com):
+    model = FakeDrawingModel()
+    target = tmp_path / "sheet.pdf"
+    target.write_bytes(b"%PDF")
+    model.save_as_plan = [True]
+    assert SwDrawing(model).export_pdf(target) == target
+    assert len(model.save_as_args) == 1, (
+        "the empty dispatch is the documented form, so the plain call is only "
+        "a fallback and must not run when the first attempt already worked"
+    )
+
+
+def test_export_pdf_reports_what_each_attempt_was_refused_with(tmp_path, fake_com):
+    model = FakeDrawingModel()
+    model.save_as_plan = [ValueError("类型不匹配"), False]
+    with pytest.raises(SwError, match="PDF export failed") as caught:
+        SwDrawing(model).export_pdf(tmp_path / "sheet.pdf")
+    message = str(caught.value)
+    assert "empty dispatch raised ValueError" in message, (
+        "the fallback only runs because the first call can raise instead of "
+        "answering False; dropping that exception leaves no trace of the cause"
+    )
+    assert "plain call was refused (errors=0, warnings=0)" in message
+
+
+def test_export_pdf_repeats_the_counters_of_both_refused_attempts(tmp_path, fake_com):
+    model = FakeDrawingModel()
+    model.save_as_plan = [(False, 1, 0), (False, 2, 0)]
+    with pytest.raises(SwError, match="PDF export failed") as caught:
+        SwDrawing(model).export_pdf(tmp_path / "sheet.pdf")
+    message = str(caught.value)
+    both = ("errors=1, warnings=0)" in message, "errors=2, warnings=0)" in message)
+    assert all(both), (
+        "each attempt fails for its own reason, so the message has to carry "
+        f"both counters instead of only the last one. Got {message!r}"
+    )
+
+
+def test_export_pdf_names_a_success_that_wrote_no_file(tmp_path, fake_com):
+    model = FakeDrawingModel()
+    model.save_as_plan = [(True, 0, 0), (True, 0, 0)]
+    with pytest.raises(SwError, match="reported success but wrote no file") as caught:
+        SwDrawing(model).export_pdf(tmp_path / "sheet.pdf")
+    assert "errors=0, warnings=0" in str(caught.value), (
+        "SaveAs answering True without a file on disk is a SolidWorks quirk; "
+        "reporting it as a plain failure sends the caller looking for a "
+        "permission problem that does not exist"
+    )
 
 
 def test_auto_dimension_activates_the_view_first_and_counts_what_was_added():

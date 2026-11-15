@@ -222,18 +222,34 @@ class SwDrawing:
         pythoncom, _ = _com()
         from win32com.client import VARIANT  # type: ignore
 
-        for export_data in (_callout(pythoncom), None):
+        refused: list[str] = []
+        for label, export_data in (
+            ("empty dispatch", _callout(pythoncom)),
+            ("plain call", None),
+        ):
             errors = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
             warnings = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
             try:
-                ok = self.ext.SaveAs(
-                    str(target), 0, 1, export_data, errors, warnings
-                )
-            except Exception:
+                ok = self.ext.SaveAs(str(target), 0, 1, export_data, errors, warnings)
+            except Exception as exc:  # noqa: BLE001 - the fallback path is the cause
+                # The fallback exists because this attempt can raise instead of
+                # answering False; its exception is the only trace of why, so it
+                # is kept for the final message rather than dropped here.
+                refused.append(f"{label} raised {type(exc).__name__}: {exc}")
                 continue
             if ok and target.exists():
                 return target
-        raise SwError(f"PDF export failed: {target}")
+            counters = f"errors={errors.value}, warnings={warnings.value}"
+            if ok:
+                # SaveAs answered success while the file is not on disk; saying
+                # so is the difference between a SolidWorks quirk and a caller
+                # looking for the PDF in the wrong place.
+                refused.append(
+                    f"{label} reported success but wrote no file ({counters})"
+                )
+            else:
+                refused.append(f"{label} was refused ({counters})")
+        raise SwError(f"PDF export failed: {target} ({'; '.join(refused)})")
 
     def close(self) -> None:
         """Close the drawing document once its files are written.
