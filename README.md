@@ -352,7 +352,7 @@ second run into a clean directory reproduces them and leaves no documents open b
 ## Tests
 
 ```bash
-pytest        # 272 tests, no SolidWorks required
+pytest        # 286 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,
@@ -367,6 +367,14 @@ through that component's own placement before the boxes are unioned — the fix 
 assembly that had been reported against a predicted 120.00 — and `tests/test_assembly_bbox.py`
 drives the real function over turned and unturned components, so the union cannot quietly go back
 to reading part coordinates.
+
+Mates are covered the same way, and for the same reason: their failure modes are silent. A fake
+assembly document fills in the by-ref `swAddMateError` the way SolidWorks does, so
+`tests/test_mates.py` can assert the two things a mate gets wrong without saying so — the
+millimetres-to-metres conversion `AddMate5` needs, and an error code where `1` is success. It
+also watches the selection order `mate_planes` builds: clear, select, append, mate, clear. A pair
+left selected quietly becomes one more entity in the next mate, and a distance mate read the
+intuitive way throws away every mate the run made.
 
 ## License
 
