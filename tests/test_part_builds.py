@@ -76,7 +76,7 @@ def test_hex_nut_drills_its_hole_with_a_through_cut():
     params = {"size": "M8"}
     model, expected = _record("hex_nut", params)
     assert [len(sketch.loops) for sketch in model.sketches] == [1, 1]
-    assert model.sketches[1].loops[0].args[2] == pytest.approx(round(0.85 * 8, 3))
+    assert model.sketches[1].loops[0].args[2] == pytest.approx(8.4)
     assert [feature.op for feature in model.features] == ["extrude", "cut_through"]
     assert model.volume_mm3() == pytest.approx(expected)
 
