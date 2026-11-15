@@ -314,6 +314,11 @@ they cost real debugging time and are documented so you do not pay for them agai
   after the close has been issued.
 - **`OpenDoc6` answers `errors=65536` for a file an open document still holds.** Reuse the open
   document instead of reopening it, or close it first.
+- **`CreatePolygon` takes the circumradius, not the distance across the flats.** With
+  `inscribed` true the vertices sit on the radius, so a regular *n*-gon's flats are
+  `r * cos(pi / n)` from the centre: `r = across_flats / (2 * cos(pi / n))`. That is
+  `across_flats / sqrt(3)` for a hexagon and nothing like it for any other side count —
+  `Sketch.polygon` sizes every polygon through the general form.
 
 ### One thread, one document at a time
 
@@ -355,7 +360,7 @@ out, which is what keeps a long running session from accumulating open documents
 ## Tests
 
 ```bash
-pytest        # 298 tests, no SolidWorks required
+pytest        # 316 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,
