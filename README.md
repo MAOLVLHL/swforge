@@ -129,6 +129,8 @@ $ swforge build m7.json
 error: spec 'b': 'M7' is not in GB/T 5783 hex bolts; known sizes: M10, M12, M16, M20, M6, M8
 $ swforge build badsize.json
 error: spec 'w': washer cannot use these parameters: 'int' object has no attribute 'upper'
+$ swforge build margine.json
+error: spec 'p': multi_hole_plate does not read 'margine' (did you mean 'margin'?); it reads: length, width, thickness, hole_d, rows, cols, margin
 ```
 
 The last one is the case a schema check cannot catch: the file is valid JSON, the key is
@@ -137,6 +139,14 @@ spelled right, and the value is simply not a size. `swforge.parts` raises `Param
 `AttributeError` that `upper()` raised three frames down. `assemble --dry-run` runs the same
 check over every part of an assembly, so a stack that cannot be built is refused before
 SolidWorks opens a document.
+
+The `margine` line above is the louder version of the same mistake. Every builder reads its
+parameters with `params.get(key, default)`, so a key nobody reads costs nothing at the call
+site: `margin` falls back to `max(hole_d, 2*thickness)`, the plate is drilled somewhere the
+file did not ask for, and the analytic answer falls back to the same default -- volume and
+bounding box agree, so the run used to pass. `swforge.parts` compares the keys against the
+`PARAMS` each builder declares and names the near miss with `difflib`, so a typo is answered
+before anything is drawn.
 
 2 means the run never started — a path you typed wrong, a file Notepad saved with a byte-order
 mark, a kind you misspelled, a parameter you left out, an assembly with no parts. 1 still means a
@@ -360,7 +370,7 @@ out, which is what keeps a long running session from accumulating open documents
 ## Tests
 
 ```bash
-pytest        # 316 tests, no SolidWorks required
+pytest        # 325 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,

@@ -189,3 +189,80 @@ def test_build_reports_bad_parameters_the_same_way_as_analytic():
         parts.build(object(), "washer", {"size": 8})
     assert "washer cannot use these parameters" in str(excinfo.value)
 
+
+def test_a_parameter_no_builder_reads_is_named_with_the_one_that_was_meant():
+    # "margine" reaches the builder as nothing at all: get() finds no such key,
+    # margin falls back to its default and the plate is drilled where nobody
+    # asked.  The typo has to be the answer, and the nearest declared name is
+    # the useful half of it.
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.analytic(
+            "multi_hole_plate",
+            {
+                "length": 120,
+                "width": 80,
+                "thickness": 6,
+                "hole_d": 9,
+                "margine": 25,
+            },
+        )
+    message = str(excinfo.value)
+    assert "does not read 'margine'" in message
+    assert "did you mean 'margin'" in message
+    assert "length" in message
+
+
+def test_an_unknown_parameter_far_from_every_declared_one_gets_no_guess():
+    # A wrong guess is worse than no guess, so nothing is offered when difflib
+    # finds no neighbour at all.
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.analytic("hex_nut", {"size": "M8", "colour": "red"})
+    message = str(excinfo.value)
+    assert "does not read 'colour'" in message
+    assert "did you mean" not in message
+    assert "size" in message
+
+
+def test_a_mistyped_required_parameter_is_the_typo_and_not_the_missing_field():
+    # Without the check this is a KeyError for 'length', which sends the user
+    # looking for a field they already typed -- twice.
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.analytic("hex_bolt", {"size": "M8", "lenght": 40})
+    message = str(excinfo.value)
+    assert "does not read 'lenght'" in message
+    assert "did you mean 'length'" in message
+
+
+def test_build_rejects_an_unknown_parameter_before_it_draws_anything():
+    # Same answer on the path that reaches SolidWorks: the model is not touched
+    # at all, which object() proves -- any call on it would be AttributeError.
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.build(object(), "hex_nut", {"size": "M8", "colour": "red"})
+    assert "does not read 'colour'" in str(excinfo.value)
+
+
+def test_every_unknown_parameter_is_listed_once_in_sorted_order():
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.analytic("washer", {"size": "M8", "zzz": 1, "aaa": 2})
+    message = str(excinfo.value)
+    assert message.count("'aaa'") == 1 and message.count("'zzz'") == 1
+    assert message.index("'aaa'") < message.index("'zzz'")
+
+
+def test_parameters_that_are_not_a_mapping_still_fail_inside_the_builder():
+    # A JSON file cannot get here (spec.py turns a list into "entry 0 is
+    # invalid"), but the library is public, and a list must keep answering with
+    # the builder's own ParamError instead of a TypeError from the key scan.
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.analytic("washer", [1, 2])
+    assert "washer cannot use these parameters" in str(excinfo.value)
+
+
+def test_unknown_keys_that_are_not_strings_are_still_listed_in_a_fixed_order():
+    # JSON keys are always strings, but the library is public and a dict can
+    # hold anything; sorted(..., key=str) is what keeps the sentence identical
+    # from run to run instead of following set iteration order.
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.analytic("washer", {"size": "M8", 10: 1, 9: 2})
+    message = str(excinfo.value)
+    assert "does not read 10, 9;" in message

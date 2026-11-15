@@ -472,6 +472,43 @@ def test_an_assembly_with_an_unusable_parameter_is_rejected_before_solidworks(
     err = capsys.readouterr().err
     assert err.startswith(f"error: assembly file {path}: hex_bolt cannot use "), err
 
+
+def test_a_parameter_key_the_builder_never_reads_is_a_typo_not_a_default(tmp_path, capsys):
+    # The file is valid JSON, every required key is present, and the part still
+    # comes out wrong: "margine" is not read, margin falls back to
+    # max(hole_d, 2*thickness) = 12, and the plate is drilled at x = 12/60/108
+    # instead of 25/60/95 -- while analytic falls back to the same default, so
+    # the volumes agree and verify used to print a clean plan and exit 0.
+    path = tmp_path / "typo.json"
+    path.write_text(
+        '{"kind": "multi_hole_plate", "name": "p", "params": {"length": 120, '
+        '"width": 80, "thickness": 6, "hole_d": 9, "margine": 25}}',
+        encoding="utf-8",
+    )
+    assert main(["verify", str(path)]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error: spec 'p': multi_hole_plate does not read 'margine'"), err
+    assert "did you mean 'margin'" in err
+    assert "V=" not in err
+
+
+def test_an_unknown_parameter_stops_a_stack_before_solidworks(tmp_path, capsys):
+    # predict() reads every part's parameters, so a typo in a stack is caught by
+    # the dry run as well.  The sentence names the file, the same as every other
+    # assembly the loader refuses.
+    from swforge.demo import bolt_stack
+
+    payload = bolt_stack().to_dict()
+    for spec in payload["parts"].values():
+        if spec["kind"] == "multi_hole_plate":
+            spec["params"]["margine"] = 25
+    path = tmp_path / "typomargin.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert main(["assemble", str(path), "--dry-run"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith(f"error: assembly file {path}: multi_hole_plate does not read"), err
+    assert "did you mean 'margin'" in err
+
 # -- draw names its views before it opens SolidWorks ------------------------
 #
 # draw is the one subcommand whose argument is a list of names rather than a

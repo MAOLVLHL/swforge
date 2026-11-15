@@ -12,6 +12,7 @@ and refuses to import if it does not.
 
 from __future__ import annotations
 
+import difflib
 from typing import Any, Callable
 
 from ..geometry import Solid
@@ -108,8 +109,39 @@ def check_kind(kind: str) -> None:
         raise KeyError(f"unknown part kind {kind!r}; known: {', '.join(KINDS)}")
 
 
+def _reject_unknown(kind: str, params: Any) -> None:
+    """Refuse a parameter dict that carries a key the builder never reads.
+
+    Every builder reads params.get(key, default), so a mistyped key costs
+    nothing at the call site: the default is used, the part comes out wrong,
+    and the analytic answer falls back to the same default, so the volume and
+    the bounding box still agree.  A plate with "margine" in it is drilled
+    where nobody asked, and the build reports success.  The typo can only be
+    caught next to the declaration that knows which keys exist, which is here.
+
+    A near miss is worth naming: difflib is right far more often than it is
+    wrong, and the alternative is the user comparing two spellings by eye.
+    """
+    if not hasattr(params, "keys"):
+        return  # not a mapping at all: the builder reports that itself
+    declared = [param.name for param in _MODULES[kind].PARAMS]
+    unknown = sorted(set(params) - set(declared), key=str)
+    if not unknown:
+        return
+    described = []
+    for key in unknown:
+        near = difflib.get_close_matches(str(key), declared, n=1, cutoff=0.6)
+        hint = f" (did you mean {near[0]!r}?)" if near else ""
+        described.append(f"{key!r}{hint}")
+    raise ParamError(
+        f"{kind} does not read {', '.join(described)}; "
+        f"it reads: {', '.join(declared)}"
+    )
+
+
 def analytic(kind: str, params: dict[str, Any]) -> Solid:
     check_kind(kind)
+    _reject_unknown(kind, params)
     filler, _ = PARTS[kind]
     try:
         return filler(params)
@@ -124,6 +156,7 @@ def analytic(kind: str, params: dict[str, Any]) -> Solid:
 
 def build(model: Any, kind: str, params: dict[str, Any]) -> None:
     check_kind(kind)
+    _reject_unknown(kind, params)
     _, builder = PARTS[kind]
     try:
         builder(model, params)
