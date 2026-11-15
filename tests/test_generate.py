@@ -417,10 +417,22 @@ class FakeDrawModel:
 
 
 class FakeDrawingDoc:
-    """A drawing that grows one view per add_named_view, then dimension it."""
+    """A drawing that grows one view per add_named_view, then dimension it.
 
-    def __init__(self, gain=2):
+    *log* records the documents closed, in the order they were closed, so a
+    test can see that a failed draw still closes the drawing and the model --
+    and that it closes the drawing first.  The three ``*_error`` hooks make a
+    stage of the write fail the way SolidWorks does.
+    """
+
+    def __init__(self, gain=2, log=None, view_error=None, save_error=None,
+                 export_error=None, close_error=None):
         self.gain = gain
+        self.log = [] if log is None else log
+        self.view_error = view_error
+        self.save_error = save_error
+        self.export_error = export_error
+        self.close_error = close_error
         self.calls: list[tuple[str, int]] = []
         self.dimensioned: list[str] = []
         self.saved = None
@@ -428,6 +440,8 @@ class FakeDrawingDoc:
         self.closed = False
 
     def add_named_view(self, model_path, view_name, x_mm, y_mm):
+        if self.view_error is not None:
+            raise self.view_error
         placed = f"Drawing View{len(self.calls) + 1}"
         self.calls.append((placed, 0))
         return placed
@@ -441,23 +455,34 @@ class FakeDrawingDoc:
         raise AssertionError(f"dimensioned a view that is not there: {view_name}")
 
     def save(self, path):
+        if self.save_error is not None:
+            raise self.save_error
         self.saved = path
         return path
 
     def export_pdf(self, path):
+        if self.export_error is not None:
+            raise self.export_error
         self.exported = path
         return path
 
     def close(self):
+        self.log.append("drawing")
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
-def _draw_session(drawing):
+def _draw_session(drawing, model=None, new_drawing=None):
     events = []
     session = SimpleNamespace(
-        open_document=lambda path, doctype: FakeDrawModel(),
+        open_document=lambda path, doctype: (
+            FakeDrawModel() if model is None else model
+        ),
         activate=lambda model: events.append("activate"),
-        new_drawing=lambda sheet=None: drawing,
+        new_drawing=new_drawing
+        if new_drawing is not None
+        else (lambda sheet=None: drawing),
         app=None,
     )
     return session
@@ -580,6 +605,158 @@ def test_draw_refuses_a_bad_view_before_it_opens_the_model(tmp_path, monkeypatch
     assert opened == [], "nothing was opened, so no document is left half made"
 
 
+
+
+# -- the documents go back even when the write fails ------------------------
+#
+# draw() opens the model and creates a drawing, and both have to be closed.
+# The closes used to sit after the return-value assembly, so a save refused
+# because the file was locked -- or a PDF export SolidWorks would not do --
+# sent the error back to the caller and left both documents loaded.  On a
+# session that keeps building, that is how nineteen documents end up open.
+
+
+def _record_closes(monkeypatch, log):
+    """Let draw() build its SwModel wrapper, but only record the close."""
+    from swforge import generate
+
+    def fake_sw_model(model, app):
+        def close():
+            log.append("model")
+            model.closed = True
+
+        return SimpleNamespace(close=close)
+
+    monkeypatch.setattr(generate, "SwModel", fake_sw_model)
+
+
+def test_draw_closes_the_drawing_before_the_model_it_draws(tmp_path, monkeypatch):
+    from swforge import generate
+
+    log = []
+    _record_closes(monkeypatch, log)
+    drawing = FakeDrawingDoc(log=log)
+    model = FakeDrawModel()
+
+    generate.draw(
+        _draw_session(drawing, model=model),
+        tmp_path / "plate.sldprt",
+        out_dir=str(tmp_path),
+    )
+
+    assert log == ["drawing", "model"], "the drawing holds the model open, so it goes first"
+    assert model.closed
+    assert drawing.exported is not None, "both files were written before anything closed"
+
+
+def test_a_failed_save_still_closes_both_documents(tmp_path, monkeypatch):
+    from swforge import generate
+
+    log = []
+    _record_closes(monkeypatch, log)
+    drawing = FakeDrawingDoc(
+        log=log,
+        save_error=SwError(
+            "save failed, the file is locked by an open document: "
+            "drawing_plate.slddrw (errors=1, warnings=0)"
+        ),
+    )
+    model = FakeDrawModel()
+
+    with pytest.raises(SwError) as error:
+        generate.draw(
+            _draw_session(drawing, model=model),
+            tmp_path / "plate.sldprt",
+            out_dir=str(tmp_path),
+        )
+
+    assert "locked by an open document" in str(error.value)
+    assert log == ["drawing", "model"], "a failed save must not leak two documents"
+    assert drawing.closed and model.closed
+
+
+def test_a_failed_pdf_export_still_closes_both_documents(tmp_path, monkeypatch):
+    from swforge import generate
+
+    log = []
+    _record_closes(monkeypatch, log)
+    drawing = FakeDrawingDoc(
+        log=log,
+        export_error=SwError("PDF export failed: drawing_plate.pdf"),
+    )
+    model = FakeDrawModel()
+
+    with pytest.raises(SwError) as error:
+        generate.draw(
+            _draw_session(drawing, model=model),
+            tmp_path / "plate.sldprt",
+            out_dir=str(tmp_path),
+        )
+
+    assert "PDF export failed" in str(error.value)
+    assert log == ["drawing", "model"]
+    assert drawing.saved is not None, "the .slddrw was written before the export failed"
+    assert model.closed
+
+
+def test_a_view_that_will_not_place_still_closes_both_documents(tmp_path, monkeypatch):
+    from swforge import generate
+
+    log = []
+    _record_closes(monkeypatch, log)
+    drawing = FakeDrawingDoc(
+        log=log,
+        view_error=SwError("cannot activate drawing view 'Drawing View1'"),
+    )
+    model = FakeDrawModel()
+
+    with pytest.raises(SwError):
+        generate.draw(
+            _draw_session(drawing, model=model),
+            tmp_path / "plate.sldprt",
+            out_dir=str(tmp_path),
+        )
+
+    assert log == ["drawing", "model"], "nothing was written, and nothing is left open"
+
+
+def test_a_drawing_that_refuses_to_close_does_not_strand_the_model(tmp_path, monkeypatch):
+    from swforge import generate
+
+    log = []
+    _record_closes(monkeypatch, log)
+    drawing = FakeDrawingDoc(log=log, close_error=SwError("the drawing is busy"))
+    model = FakeDrawModel()
+
+    with pytest.raises(SwError) as error:
+        generate.draw(
+            _draw_session(drawing, model=model),
+            tmp_path / "plate.sldprt",
+            out_dir=str(tmp_path),
+        )
+
+    assert "busy" in str(error.value)
+    assert log == ["drawing", "model"], "the model is closed even when the drawing will not"
+    assert model.closed
+
+
+def test_a_session_that_cannot_make_a_drawing_still_closes_the_model(tmp_path, monkeypatch):
+    from swforge import generate
+
+    log = []
+    _record_closes(monkeypatch, log)
+    model = FakeDrawModel()
+
+    def no_drawing(sheet=None):
+        raise SwError("SolidWorks refused to create a new drawing")
+
+    session = _draw_session(None, model=model, new_drawing=no_drawing)
+
+    with pytest.raises(SwError):
+        generate.draw(session, tmp_path / "plate.sldprt", out_dir=str(tmp_path))
+
+    assert log == ["model"], "there was no drawing to close, and the model still goes back"
+    assert model.closed
 
 def test_a_missing_part_is_not_an_error_and_says_nothing(tmp_path):
     """None is the signal to build it; a resumed run must not report a stage for it."""

@@ -468,44 +468,59 @@ def draw(
     target = Path(model_path).resolve()
     doctype = 2 if target.suffix.lower() == ".sldasm" else 1
     model = session.open_document(target, doctype)
-    session.activate(model)
+    files: dict[str, str] = {}
+    drawing: Any = None
+    # Everything below holds two documents open, and both have to go back
+    # whatever happens: a save that fails because the file is locked, or a PDF
+    # export that SolidWorks refuses, used to return the error to the caller
+    # and leave the drawing and the model loaded for the life of the session.
+    # build_assembly already closes its assembly in a finally for the same
+    # reason; a failed draw leaked exactly the two documents it built.
+    try:
+        session.activate(model)
 
-    ids = {
-        "front": VIEW_FRONT,
-        "right": VIEW_RIGHT,
-        "top": VIEW_TOP,
-        "iso": VIEW_ISOMETRIC,
-    }
-    for name in views:
-        model.ShowNamedView2("", ids[name])
-        model.NameView(f"{DRAWING_VIEW_NAME}_{name}")
+        ids = {
+            "front": VIEW_FRONT,
+            "right": VIEW_RIGHT,
+            "top": VIEW_TOP,
+            "iso": VIEW_ISOMETRIC,
+        }
+        for name in views:
+            model.ShowNamedView2("", ids[name])
+            model.NameView(f"{DRAWING_VIEW_NAME}_{name}")
 
-    drawing = session.new_drawing(sheet) if sheet else session.new_drawing()
-    positions = {
-        "front": (60.0, 140.0),
-        "top": (60.0, 70.0),
-        "right": (170.0, 140.0),
-        "iso": (190.0, 70.0),
-    }
-    placed: list[str] = []
-    dimensioned = 0
-    for name in views:
-        x, y = positions.get(name, (60.0, 120.0))
-        view_name = drawing.add_named_view(
-            target, f"{DRAWING_VIEW_NAME}_{name}", x, y
-        )
-        placed.append(view_name)
-        if dimensions:
-            dimensioned += drawing.auto_dimension(view_name)
+        drawing = session.new_drawing(sheet) if sheet else session.new_drawing()
+        positions = {
+            "front": (60.0, 140.0),
+            "top": (60.0, 70.0),
+            "right": (170.0, 140.0),
+            "iso": (190.0, 70.0),
+        }
+        placed: list[str] = []
+        dimensioned = 0
+        for name in views:
+            x, y = positions.get(name, (60.0, 120.0))
+            view_name = drawing.add_named_view(
+                target, f"{DRAWING_VIEW_NAME}_{name}", x, y
+            )
+            placed.append(view_name)
+            if dimensions:
+                dimensioned += drawing.auto_dimension(view_name)
 
-    stem = Path(out_dir) / f"drawing_{target.stem}"
-    files = {"drawing": str(drawing.save(stem.with_suffix(".slddrw")))}
-    files["pdf"] = str(drawing.export_pdf(stem.with_suffix(".pdf")))
-    files["views"] = ", ".join(placed)
-    files["dimensions"] = str(dimensioned)
-    # Close the drawing first: it holds the model open through its view
-    # references, so the model goes second.  *model* here is the raw COM
-    # document, so it needs the wrapper before it can be closed.
-    drawing.close()
-    SwModel(model, session.app).close()
+        stem = Path(out_dir) / f"drawing_{target.stem}"
+        files["drawing"] = str(drawing.save(stem.with_suffix(".slddrw")))
+        files["pdf"] = str(drawing.export_pdf(stem.with_suffix(".pdf")))
+        files["views"] = ", ".join(placed)
+        files["dimensions"] = str(dimensioned)
+    finally:
+        # Close the drawing first: it holds the model open through its view
+        # references, so the model goes second.  *model* here is the raw COM
+        # document, so it needs the wrapper before it can be closed.  The two
+        # closes are nested so a drawing that refuses to close cannot strand
+        # the model it was drawing.
+        try:
+            if drawing is not None:
+                drawing.close()
+        finally:
+            SwModel(model, session.app).close()
     return files
