@@ -6,11 +6,16 @@ Parameters (all millimetres):
     width   width of both legs, along Z
     thickness  plate thickness
     hole_d  clearance hole diameter, 0 disables drilling
-    holes_per_leg  holes through the long leg, centred on its width
+    holes_in_long_leg  holes through the long leg, centred on its width
+    short_leg_holes  must be 0: the short leg is modelled solid
 
-The short leg is modelled solid: its holes are drilled across the plate
-thickness, i.e. along X, which a single top-plane extrusion cannot express.
-The long leg carries the full hole pattern the parameters ask for.
+The short leg has no holes. Drilling it means cutting across the plate
+thickness, i.e. along X, and every feature this builder draws starts from a
+top-plane profile extruded along Y; the cut it would need is a second
+direction, not a second sketch. short_leg_holes therefore exists only to
+refuse the request with that reason instead of shipping half a bracket that
+measures correct, because analytic and build leave the same holes out and
+volume plus box cannot see the missing holes.
 
 The two legs share the corner block T x W x T, which is counted once only.
 """
@@ -30,7 +35,8 @@ PARAMS = (
     Param("width"),
     Param("thickness"),
     Param("hole_d", required=False, default=0.0),
-    Param("holes_per_leg", required=False, default=2),
+    Param("holes_in_long_leg", required=False, default=2),
+    Param("short_leg_holes", required=False, default=0),
 )
 
 
@@ -41,7 +47,8 @@ def _validated(params: dict[str, Any]) -> dict[str, float]:
         "width": float(params["width"]),
         "thickness": float(params["thickness"]),
         "hole_d": float(params.get("hole_d", 0.0)),
-        "holes_per_leg": int(params.get("holes_per_leg", 2)),
+        "holes_in_long_leg": int(params.get("holes_in_long_leg", 2)),
+        "short_leg_holes": int(params.get("short_leg_holes", 0)),
     }
     for key in ("leg_a", "leg_b", "width", "thickness"):
         if values[key] <= 0:
@@ -52,10 +59,16 @@ def _validated(params: dict[str, Any]) -> dict[str, float]:
         raise ValueError(f"hole_d must not be negative, got {values['hole_d']}")
     if values["hole_d"] and values["hole_d"] >= 0.8 * values["width"]:
         raise ValueError("hole_d is too large for the bracket width")
-    if values["hole_d"] and values["holes_per_leg"] < 1:
+    if values["hole_d"] and values["holes_in_long_leg"] < 1:
         raise ValueError(
-            f"holes_per_leg must be at least 1, got {values['holes_per_leg']}; "
+            f"holes_in_long_leg must be at least 1, got {values['holes_in_long_leg']}; "
             "use hole_d 0 to leave the leg solid"
+        )
+    if values["short_leg_holes"]:
+        raise ValueError(
+            "the short leg is modelled solid: its holes would be cut along X, "
+            "and this builder only extrudes top-plane profiles along Y; "
+            "short_leg_holes must be 0"
         )
     return values
 
@@ -76,7 +89,7 @@ def analytic(params: dict[str, Any]) -> Solid:
     if v["hole_d"]:
         one_hole = math.pi / 4.0 * v["hole_d"] ** 2 * v["thickness"]
         body = Solid(
-            body.volume_mm3 - one_hole * v["holes_per_leg"], body.bbox_mm
+            body.volume_mm3 - one_hole * v["holes_in_long_leg"], body.bbox_mm
         )
     return body
 
@@ -102,8 +115,8 @@ def build(model: Any, params: dict[str, Any]) -> None:
 
 
 def _hole_positions(v: dict[str, float]) -> list[tuple[float, float]]:
-    """Evenly spaced holes along each leg, a plate thickness in from the edge."""
-    count = int(v["holes_per_leg"])
+    """Evenly spaced holes along the long leg, a plate thickness in from it."""
+    count = int(v["holes_in_long_leg"])
     t = v["thickness"]
     points: list[tuple[float, float]] = []
     for index in range(count):

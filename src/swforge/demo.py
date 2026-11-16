@@ -25,7 +25,7 @@ def showcase() -> list[PartSpec]:
                 "width": 40,
                 "thickness": 5,
                 "hole_d": 9,
-                "holes_per_leg": 2,
+                "holes_in_long_leg": 2,
             },
         ),
         PartSpec(

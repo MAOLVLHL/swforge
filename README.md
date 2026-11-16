@@ -177,7 +177,7 @@ and the catalogue values when the key is looked up in a table rather than taken 
 | `hex_nut` | `size` | 748.3 mm³ (M8) |
 | `washer` | `size` | 233.0 mm³ (M8) |
 | `socket_screw` | `size`, `length` | 1100.2 mm³ (M6×25) |
-| `l_bracket` | `leg_a`, `leg_b`, `width`, `thickness`, `hole_d`, `holes_per_leg` | 18363.8 mm³ |
+| `l_bracket` | `leg_a`, `leg_b`, `width`, `thickness`, `hole_d`, `holes_in_long_leg`, `short_leg_holes` | 18363.8 mm³ |
 | `multi_hole_plate` | `length`, `width`, `thickness`, `hole_d`, `rows`, `cols`, `margin` | 55309.8 mm³ |
 | `stepped_shaft` | `d1`/`l1`, `d2`/`l2`, `d3`/`l3` | 18456.9 mm³ |
 | `flange` | `outer_d`, `hub_d`, `plate_t`, `hub_h`, `bore_d`, `bolt_d`, `bolt_count`, `bolt_circle_d` | 74568.8 mm³ |
@@ -187,12 +187,20 @@ number it is given and does not consult a table, so `schema()` advertises no cho
 
 Positive is enforced, not assumed. A zero or negative `length` used to come back as a fastener
 shorter than its own head, and `verify` printed that volume and exited 0; the same went for a
-negative `hole_d`, whose square hid the sign from the volume, and for a negative
-`holes_per_leg`, which subtracted backwards and made the bracket gain material. Each of those
-modules now funnels both `analytic()` and `build()` through one `_validated()`, so the plan and
-the sketch refuse the same numbers in the same words. `holes_per_leg` only has to be positive
-once a `hole_d` is given: `hole_d 0` is how you say "leave the leg solid", and the count is
-then beside the point.
+negative `hole_d`, whose square hid the sign from the volume, and for a negative hole count,
+which subtracted backwards and made the bracket gain material. Each of those modules now
+funnels both `analytic()` and `build()` through one `_validated()`, so the plan and the sketch
+refuse the same numbers in the same words. The hole count only has to be positive once a
+`hole_d` is given: `hole_d 0` is how you say "leave the leg solid", and the count is then
+beside the point.
+
+`l_bracket` models its short leg solid, and says so where a caller can read it: the hole count
+is named `holes_in_long_leg` for the leg it actually drills, and `short_leg_holes` exists only
+to refuse a non-zero value with the reason. Drilling that leg means cutting across the plate
+thickness, along X, while every feature the builder draws starts from a top-plane profile
+extruded along Y — a second direction, not a second sketch. Accepting the request and leaving
+the holes out would still verify, because `analytic` and `build` simplify the part the same way
+and volume plus bounding box cannot see the holes that were never cut.
 
 Catalogue tables cover M6–M20 for GB/T 5783 (hex bolts), GB/T 6170 (hex nuts),
 GB/T 97.1 (plain washers) and GB/T 70.1 (socket head cap screws), at maximum material
@@ -384,7 +392,7 @@ out, which is what keeps a long running session from accumulating open documents
 ## Tests
 
 ```bash
-pytest        # 390 tests, no SolidWorks required
+pytest        # 398 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,

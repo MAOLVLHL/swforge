@@ -118,7 +118,7 @@ def test_l_bracket_drills_the_long_leg_only():
         "width": 40,
         "thickness": 5,
         "hole_d": 9,
-        "holes_per_leg": 2,
+        "holes_in_long_leg": 2,
     }
     model, expected = _record("l_bracket", params)
     long_leg, short_leg = model.sketches
@@ -216,6 +216,66 @@ def test_l_bracket_without_holes_drills_nothing():
     model, expected = _record("l_bracket", params)
     assert [loop.shape for loop in model.sketches[0].loops] == ["rectangle"]
     assert model.volume_mm3(5 * 40 * 5) == pytest.approx(expected)
+
+
+def test_l_bracket_drills_as_many_holes_as_the_long_leg_asks_for():
+    """The count is the parameter, not a fixed pair."""
+    params = {
+        "leg_a": 100,
+        "leg_b": 50,
+        "width": 40,
+        "thickness": 5,
+        "hole_d": 9,
+        "holes_in_long_leg": 3,
+    }
+    model, expected = _record("l_bracket", params)
+    shapes = [loop.shape for loop in model.sketches[0].loops]
+    assert shapes == ["rectangle", "circle", "circle", "circle"], shapes
+    assert model.volume_mm3(5 * 40 * 5) == pytest.approx(expected)
+
+
+def test_l_bracket_spaces_its_holes_along_the_long_leg():
+    """Three holes on a 100 mm leg sit 30 mm apart, clear of both ends.
+
+    Counting the circles would pass even if they all landed on one spot, so the
+    centres are what this asserts: half a pitch in from each end, one pitch
+    apart, on the middle of the width.
+    """
+    params = {
+        "leg_a": 100,
+        "leg_b": 50,
+        "width": 40,
+        "thickness": 5,
+        "hole_d": 9,
+        "holes_in_long_leg": 3,
+    }
+    model, _ = _record("l_bracket", params)
+    circles = [loop.args for loop in model.sketches[0].loops if loop.shape == "circle"]
+    assert [round(x, 6) for x, _, _ in circles] == [20.0, 50.0, 80.0]
+    assert [round(z, 6) for _, z, _ in circles] == [20.0, 20.0, 20.0]
+
+
+def test_l_bracket_refuses_short_leg_holes_before_it_draws_anything():
+    """A refused request must not leave a half-built part in the document.
+
+    The refusal lives in _validated(), which build() calls first; if it moved
+    after the first sketch, the caller would be left holding a bracket whose
+    volume nobody promised.
+    """
+    params = {
+        "leg_a": 60,
+        "leg_b": 40,
+        "width": 40,
+        "thickness": 5,
+        "hole_d": 9,
+        "short_leg_holes": 2,
+    }
+    model = RecordingModel()
+    with pytest.raises(ValueError) as excinfo:
+        parts.build(model, "l_bracket", params)
+    assert "modelled solid" in str(excinfo.value), excinfo.value
+    assert model.sketches == [], model.sketches
+    assert model.features == [], model.features
 
 
 def test_flange_without_bolt_holes_has_no_bolt_circle():
@@ -345,7 +405,7 @@ def test_a_single_hole_is_centred_between_the_margins():
                 "width": 40,
                 "thickness": 5,
                 "hole_d": 9,
-                "holes_per_leg": -2,
+                "holes_in_long_leg": -2,
             },
         ),
         ("l_bracket", {"leg_a": 60, "leg_b": 40, "width": 40, "thickness": 5, "hole_d": -9}),

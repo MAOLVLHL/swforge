@@ -256,3 +256,56 @@ def test_a_key_that_only_differs_in_case_is_still_unknown():
     message = str(excinfo.value)
     assert "'Size'" in message, message
     assert "did you mean 'size'" in message, message
+
+
+def test_the_old_l_bracket_key_is_refused_with_the_new_name_as_the_suggestion():
+    """holes_in_long_leg replaced holes_per_leg; the guard turns the old key into
+    a message that names the replacement, so a spec written before the rename is
+    fixed in one round trip rather than silently drilling what it did not ask for.
+    """
+    params = {
+        "leg_a": 60,
+        "leg_b": 40,
+        "width": 40,
+        "thickness": 5,
+        "hole_d": 9,
+        "holes_per_leg": 2,
+    }
+    with pytest.raises(parts.ParamError) as excinfo:
+        parts.analytic("l_bracket", params)
+    message = str(excinfo.value)
+    assert "did you mean 'holes_in_long_leg'" in message, message
+    assert "short_leg_holes" in message, (
+        "the message lists the whole declaration, which now names both hole keys"
+    )
+
+
+def test_the_l_bracket_schema_names_the_leg_each_hole_key_belongs_to():
+    row = next(row for row in parts.schema() if row["kind"] == "l_bracket")
+    names = [entry["name"] for entry in row["params"]]
+    assert "holes_in_long_leg" in names and "short_leg_holes" in names, names
+    assert "holes_per_leg" not in names, (
+        "a key that names neither leg is what let the builder drill one and claim both"
+    )
+    solid = next(entry for entry in row["params"] if entry["name"] == "short_leg_holes")
+    assert solid["default"] == 0, (
+        "the default has to be the value the builder accepts, not the one it refuses"
+    )
+
+
+def test_l_bracket_refuses_short_leg_holes_before_it_touches_the_model():
+    class Untouchable:
+        def __getattr__(self, name):
+            raise AssertionError(f"build() reached the model first: {name}")
+
+    params = {
+        "leg_a": 60,
+        "leg_b": 40,
+        "width": 40,
+        "thickness": 5,
+        "short_leg_holes": 2,
+    }
+    with pytest.raises(ValueError) as excinfo:
+        parts.build(Untouchable(), "l_bracket", params)
+    assert "modelled solid" in str(excinfo.value)
+
