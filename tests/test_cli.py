@@ -428,6 +428,23 @@ def test_a_parameter_of_the_wrong_type_is_one_sentence_not_a_traceback(tmp_path,
     assert "Traceback" not in err
 
 
+def test_verify_refuses_a_part_solidworks_could_not_machine(tmp_path, capsys):
+    # verify only ever printed the analytic volume, so a hole pattern that runs
+    # off the plate came back as V=-862.8 mm3 and exit 0 -- a sign-off on a part
+    # no machine can cut.
+    path = tmp_path / "impossible.json"
+    path.write_text(
+        '{"kind": "multi_hole_plate", "name": "plate", "params": '
+        '{"length": 20, "width": 20, "thickness": 5, "hole_d": 9, '
+        '"rows": 3, "cols": 3, "margin": 2}}',
+        encoding="utf-8",
+    )
+    assert main(["verify", str(path)]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error: spec 'plate': the 9 mm hole at (2, 2) breaks out")
+    assert "Traceback" not in err
+
+
 def test_a_size_the_catalogue_does_not_know_is_not_reported_as_missing(tmp_path, capsys):
     # catalog raises KeyError for an unknown designation, the builder raises the
     # same type for a missing parameter, and the two need opposite advice:
