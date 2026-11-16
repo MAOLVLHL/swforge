@@ -132,7 +132,7 @@ error: spec file trailing.json is not valid JSON: Illegal trailing comma before 
 $ swforge build nosize.json
 error: spec 'nosize': missing the 'size' parameter; run 'swforge kinds' to see what washer needs
 $ swforge build m7.json
-error: spec 'b': 'M7' is not in GB/T 5783 hex bolts; known sizes: M10, M12, M16, M20, M6, M8
+error: spec 'b': 'M7' is not in GB/T 5783 hex bolts; known sizes: M3, M4, M5, M6, M8, M10, M12, M16, M20, M24, M30
 $ swforge build badsize.json
 error: spec 'w': washer cannot use these parameters: 'int' object has no attribute 'upper'
 $ swforge verify too_tight.json
@@ -202,9 +202,11 @@ extruded along Y — a second direction, not a second sketch. Accepting the requ
 the holes out would still verify, because `analytic` and `build` simplify the part the same way
 and volume plus bounding box cannot see the holes that were never cut.
 
-Catalogue tables cover M6–M20 for GB/T 5783 (hex bolts), GB/T 6170 (hex nuts),
+Catalogue tables cover M3–M30 for GB/T 5783 (hex bolts), GB/T 6170 (hex nuts),
 GB/T 97.1 (plain washers) and GB/T 70.1 (socket head cap screws), at maximum material
-condition.
+condition. All four tables carry the same eleven designations, because a nut, a washer and a
+bolt of one designation have to fit each other — a nut table that stopped at M20 would make
+"M24" a bolt with nothing to thread into.
 
 The list of kinds has exactly one home, `swforge.kinds`, and `swforge.parts` refuses to
 import if it registers a different set — a kind promised by the type annotation and missing
@@ -392,7 +394,7 @@ out, which is what keeps a long running session from accumulating open documents
 ## Tests
 
 ```bash
-pytest        # 398 tests, no SolidWorks required
+pytest        # 406 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,
