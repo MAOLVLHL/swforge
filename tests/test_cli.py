@@ -3,7 +3,7 @@ import re
 
 from swforge.cli import main
 from swforge.demo import bolt_stack, showcase
-from swforge.spec import dump_specs
+from swforge.spec import PartSpec, dump_specs
 from swforge.stack import dump_assembly
 
 
@@ -19,6 +19,20 @@ def test_verify_prints_a_plan_without_solidworks(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "hex_bolt" in out
     assert "bbox=" in out
+
+
+def test_verify_refuses_a_fastener_with_no_shank(tmp_path, capsys):
+    """verify used to print V=775.7 mm3 for length 0 and exit 0.
+
+    That is the head on its own, which is not a bolt: the build path would have
+    opened a document and failed halfway through the shank sketch.
+    """
+    path = tmp_path / "short.json"
+    dump_specs([PartSpec("hex_bolt", "short", {"size": "M8", "length": 0})], path)
+    assert main(["verify", str(path)]) == 2
+    captured = capsys.readouterr()
+    assert captured.err.startswith("error: spec 'short': length must be positive")
+    assert "V=" not in captured.out
 
 
 def test_demo_writes_the_showcase_file(tmp_path):

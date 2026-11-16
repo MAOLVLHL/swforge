@@ -185,6 +185,15 @@ and the catalogue values when the key is looked up in a table rather than taken 
 `length` is free-form on the two kinds that take it: the builder converts whatever positive
 number it is given and does not consult a table, so `schema()` advertises no choices for it.
 
+Positive is enforced, not assumed. A zero or negative `length` used to come back as a fastener
+shorter than its own head, and `verify` printed that volume and exited 0; the same went for a
+negative `hole_d`, whose square hid the sign from the volume, and for a negative
+`holes_per_leg`, which subtracted backwards and made the bracket gain material. Each of those
+modules now funnels both `analytic()` and `build()` through one `_validated()`, so the plan and
+the sketch refuse the same numbers in the same words. `holes_per_leg` only has to be positive
+once a `hole_d` is given: `hole_d 0` is how you say "leave the leg solid", and the count is
+then beside the point.
+
 Catalogue tables cover M6–M20 for GB/T 5783 (hex bolts), GB/T 6170 (hex nuts),
 GB/T 97.1 (plain washers) and GB/T 70.1 (socket head cap screws), at maximum material
 condition.
@@ -375,7 +384,7 @@ out, which is what keeps a long running session from accumulating open documents
 ## Tests
 
 ```bash
-pytest        # 371 tests, no SolidWorks required
+pytest        # 390 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,
