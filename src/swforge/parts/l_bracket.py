@@ -48,8 +48,15 @@ def _validated(params: dict[str, Any]) -> dict[str, float]:
             raise ValueError(f"{key} must be positive, got {values[key]}")
     if values["thickness"] >= min(values["leg_a"], values["leg_b"]):
         raise ValueError("thickness must be smaller than both legs")
+    if values["hole_d"] < 0:
+        raise ValueError(f"hole_d must not be negative, got {values['hole_d']}")
     if values["hole_d"] and values["hole_d"] >= 0.8 * values["width"]:
         raise ValueError("hole_d is too large for the bracket width")
+    if values["hole_d"] and values["holes_per_leg"] < 1:
+        raise ValueError(
+            f"holes_per_leg must be at least 1, got {values['holes_per_leg']}; "
+            "use hole_d 0 to leave the leg solid"
+        )
     return values
 
 

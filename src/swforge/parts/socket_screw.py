@@ -19,10 +19,22 @@ PARAMS = (
 )
 
 
-def analytic(params: dict[str, Any]) -> Solid:
+def _validated(params: dict[str, Any]) -> tuple[Any, float, float]:
+    """Reject a shank that is not there before the socket is subtracted.
+
+    socket_depth is derived from the head, so length is the only free value --
+    and a length of 0 or less is not a screw.  Without this the socket cut on a
+    6 mm head could still be subtracted from a body that had no shank.
+    """
     size = catalog.socket_screw(params["size"])
     length = float(params["length"])
-    socket_depth = round(0.6 * size.k, 3)
+    if length <= 0:
+        raise ValueError(f"length must be positive, got {length:g}")
+    return size, length, round(0.6 * size.k, 3)
+
+
+def analytic(params: dict[str, Any]) -> Solid:
+    size, length, socket_depth = _validated(params)
     head = cylinder(size.dk, size.k)
     shank = cylinder(size.d, length)
     socket = hex_prism(size.socket, socket_depth)
@@ -30,9 +42,7 @@ def analytic(params: dict[str, Any]) -> Solid:
 
 
 def build(model: Any, params: dict[str, Any]) -> None:
-    size = catalog.socket_screw(params["size"])
-    length = float(params["length"])
-    socket_depth = round(0.6 * size.k, 3)
+    size, length, socket_depth = _validated(params)
 
     with model.sketch("top") as sk:
         sk.circle(0.0, 0.0, size.dk)

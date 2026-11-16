@@ -416,3 +416,78 @@ def test_flange_rejects_a_hub_that_is_not_there():
             },
         )
     assert "hub_h must be positive, got 0.0" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "kind, size",
+    [("hex_bolt", "M8"), ("socket_screw", "M6")],
+)
+@pytest.mark.parametrize("length", [0, -1, -40])
+def test_a_free_form_length_has_to_be_positive(kind, size, length):
+    """Zero is not a short fastener: the answer used to be shorter than the head.
+
+    hex_bolt M8 length=0 came back as V=775.699 bbox=(15.011, 5.3, 13) -- the
+    head alone -- and length=-1 as V=725.433 with a 4.3 mm body.  Nothing
+    downstream noticed, so verify printed both and exited 0.
+    """
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic(kind, {"size": size, "length": length})
+    assert "length must be positive" in str(excinfo.value)
+
+
+def test_a_negative_hole_diameter_is_refused():
+    """hole_d=-9 used to answer with the volume of hole_d=9, because of the square.
+
+    The squared diameter hid the sign from the volume comparison while the
+    builder put a -9 mm circle into the sketch and handed it to SolidWorks.
+    """
+    params = {"leg_a": 60, "leg_b": 40, "width": 40, "thickness": 5, "hole_d": -9}
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic("l_bracket", params)
+    assert "hole_d must not be negative" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("count", [0, -1, -2])
+def test_a_non_positive_hole_count_is_refused(count):
+    """A count of -2 is subtracted backwards: the bracket gained material.
+
+    The 60x40x40x5 bracket is 19000 mm3 with no holes and was 19636.173 with
+    hole_d 9 and holes_per_leg -2, so the "verified" part matched a negative
+    number of holes.
+    """
+    params = {
+        "leg_a": 60,
+        "leg_b": 40,
+        "width": 40,
+        "thickness": 5,
+        "hole_d": 9,
+        "holes_per_leg": count,
+    }
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic("l_bracket", params)
+    assert "holes_per_leg must be at least 1" in str(excinfo.value)
+
+
+def test_one_hole_per_leg_is_still_a_hole():
+    """The guard is a floor, not a preference: one hole is a drilled leg."""
+    params = {"leg_a": 60, "leg_b": 40, "width": 40, "thickness": 5, "hole_d": 9}
+    solid = parts.analytic("l_bracket", dict(params, holes_per_leg=1))
+    assert solid.volume_mm3 == pytest.approx(19000.0 - math.pi / 4 * 81 * 5)
+
+
+def test_the_same_bracket_without_holes_is_unchanged():
+    """hole_d 0 still means no drilling, so the count cannot change the answer."""
+    params = {"leg_a": 60, "leg_b": 40, "width": 40, "thickness": 5}
+    solid = parts.analytic("l_bracket", dict(params, hole_d=0, holes_per_leg=2))
+    assert solid.volume_mm3 == pytest.approx(19000.0)
+
+def test_a_solid_leg_does_not_need_a_hole_count():
+    """No hole diameter means no holes, so the count cannot contradict anything.
+
+    The count guard is gated on hole_d for this reason: hole_d defaults to 0.0,
+    and a caller who wants solid legs should not have to know holes_per_leg
+    exists.  Making the guard unconditional would reject that caller.
+    """
+    params = {"leg_a": 60, "leg_b": 40, "width": 40, "thickness": 5}
+    solid = parts.analytic("l_bracket", dict(params, hole_d=0, holes_per_leg=0))
+    assert solid.volume_mm3 == pytest.approx(19000.0)

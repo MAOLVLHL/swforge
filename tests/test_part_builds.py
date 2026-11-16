@@ -334,6 +334,21 @@ def test_a_single_hole_is_centred_between_the_margins():
                 "bolt_circle_d": 100,
             },
         ),
+        ("hex_bolt", {"size": "M8", "length": 0}),
+        ("hex_bolt", {"size": "M8", "length": -1}),
+        ("socket_screw", {"size": "M6", "length": -1}),
+        (
+            "l_bracket",
+            {
+                "leg_a": 60,
+                "leg_b": 40,
+                "width": 40,
+                "thickness": 5,
+                "hole_d": 9,
+                "holes_per_leg": -2,
+            },
+        ),
+        ("l_bracket", {"leg_a": 60, "leg_b": 40, "width": 40, "thickness": 5, "hole_d": -9}),
     ],
 )
 def test_a_builder_refuses_impossible_parameters_before_drawing(kind, params):
