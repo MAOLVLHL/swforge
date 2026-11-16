@@ -67,12 +67,45 @@ def test_l_bracket_counts_the_corner_once():
 
 def test_l_bracket_holes_are_subtracted():
     base = {"leg_a": 100.0, "leg_b": 50.0, "width": 40.0, "thickness": 5.0}
-    drilled = dict(base, hole_d=9.0, holes_per_leg=2)
+    drilled = dict(base, hole_d=9.0, holes_in_long_leg=2)
     with_holes = parts.analytic("l_bracket", drilled)
     without = parts.analytic("l_bracket", base)
     removed = with_holes.volume_mm3 - without.volume_mm3
     # Only the long leg is drilled: two holes through the 5 mm plate.
     assert removed == pytest.approx(-2 * math.pi / 4 * 81 * 5)
+
+
+def test_l_bracket_refuses_to_drill_the_short_leg():
+    """Refusing beats shipping half a bracket that measures correct.
+
+    A hole through the short leg is cut along X, across the plate thickness;
+    every feature the builder draws starts from a top-plane profile extruded
+    along Y.  Modelled solid, the bracket still verifies, because analytic and
+    build leave the same holes out.
+    """
+    params = {
+        "leg_a": 60.0,
+        "leg_b": 40.0,
+        "width": 40.0,
+        "thickness": 5.0,
+        "hole_d": 6.0,
+        "short_leg_holes": 2,
+    }
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic("l_bracket", params)
+    message = str(excinfo.value)
+    assert "modelled solid" in message, message
+    assert "short_leg_holes" in message, message
+
+
+def test_l_bracket_counts_only_the_long_leg_holes_it_drills():
+    """holes_in_long_leg says where the holes are, so the count is the long leg."""
+    base = {"leg_a": 100.0, "leg_b": 50.0, "width": 40.0, "thickness": 5.0}
+    drilled = dict(base, hole_d=9.0, holes_in_long_leg=3)
+    with_holes = parts.analytic("l_bracket", drilled)
+    without = parts.analytic("l_bracket", base)
+    removed = with_holes.volume_mm3 - without.volume_mm3
+    assert removed == pytest.approx(-3 * math.pi / 4 * 81 * 5)
 
 
 def test_l_bracket_rejects_impossible_geometry():
@@ -452,7 +485,7 @@ def test_a_non_positive_hole_count_is_refused(count):
     """A count of -2 is subtracted backwards: the bracket gained material.
 
     The 60x40x40x5 bracket is 19000 mm3 with no holes and was 19636.173 with
-    hole_d 9 and holes_per_leg -2, so the "verified" part matched a negative
+    hole_d 9 and holes_in_long_leg -2, so the "verified" part matched a negative
     number of holes.
     """
     params = {
@@ -461,33 +494,36 @@ def test_a_non_positive_hole_count_is_refused(count):
         "width": 40,
         "thickness": 5,
         "hole_d": 9,
-        "holes_per_leg": count,
+        "holes_in_long_leg": count,
     }
     with pytest.raises(ValueError) as excinfo:
         parts.analytic("l_bracket", params)
-    assert "holes_per_leg must be at least 1" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "holes_in_long_leg must be at least 1" in message, message
+    # The count is only half the message: it has to name the way out too.
+    assert "use hole_d 0 to leave the leg solid" in message, message
 
 
 def test_one_hole_per_leg_is_still_a_hole():
     """The guard is a floor, not a preference: one hole is a drilled leg."""
     params = {"leg_a": 60, "leg_b": 40, "width": 40, "thickness": 5, "hole_d": 9}
-    solid = parts.analytic("l_bracket", dict(params, holes_per_leg=1))
+    solid = parts.analytic("l_bracket", dict(params, holes_in_long_leg=1))
     assert solid.volume_mm3 == pytest.approx(19000.0 - math.pi / 4 * 81 * 5)
 
 
 def test_the_same_bracket_without_holes_is_unchanged():
     """hole_d 0 still means no drilling, so the count cannot change the answer."""
     params = {"leg_a": 60, "leg_b": 40, "width": 40, "thickness": 5}
-    solid = parts.analytic("l_bracket", dict(params, hole_d=0, holes_per_leg=2))
+    solid = parts.analytic("l_bracket", dict(params, hole_d=0, holes_in_long_leg=2))
     assert solid.volume_mm3 == pytest.approx(19000.0)
 
 def test_a_solid_leg_does_not_need_a_hole_count():
     """No hole diameter means no holes, so the count cannot contradict anything.
 
     The count guard is gated on hole_d for this reason: hole_d defaults to 0.0,
-    and a caller who wants solid legs should not have to know holes_per_leg
+    and a caller who wants solid legs should not have to know holes_in_long_leg
     exists.  Making the guard unconditional would reject that caller.
     """
     params = {"leg_a": 60, "leg_b": 40, "width": 40, "thickness": 5}
-    solid = parts.analytic("l_bracket", dict(params, hole_d=0, holes_per_leg=0))
+    solid = parts.analytic("l_bracket", dict(params, hole_d=0, holes_in_long_leg=0))
     assert solid.volume_mm3 == pytest.approx(19000.0)
