@@ -247,6 +247,13 @@ came out `120.00 × 50.60 × 80.00` instead of `120.00 × 45.30 × 80.00`: the w
 been flipped under the plate, one head height deeper than predicted. Volume alone would never
 have caught it, which is why the envelope is checked too.
 
+The plane is checked before SolidWorks is involved. Only three reference planes exist on a
+generated part, so `validate()` resolves the name through the same alias table the session uses
+(`top`, `Top Plane` and `上视基准面` are one plane) and rejects anything else with the
+three names it does know. A stack with a typo in it now stops at `verify` and
+`assemble --dry-run`, instead of opening a document and failing on `cannot select
+'GroundPlane@bolt-1@stack'`.
+
 ## Drawings
 
 ```bash
@@ -394,7 +401,7 @@ out, which is what keeps a long running session from accumulating open documents
 ## Tests
 
 ```bash
-pytest        # 426 tests, no SolidWorks required
+pytest        # 437 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,
