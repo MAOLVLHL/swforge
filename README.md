@@ -174,7 +174,7 @@ and the catalogue values when the key is looked up in a table rather than taken 
 | kind | params | analytic volume (showcase) |
 |---|---|---|
 | `hex_bolt` | `size`, `length` | 2786.3 mm³ (M8×40) |
-| `hex_nut` | `size` | 748.3 mm³ (M8) |
+| `hex_nut` | `size` | 618.4 mm³ (M8) |
 | `washer` | `size` | 233.0 mm³ (M8) |
 | `socket_screw` | `size`, `length` | 1100.2 mm³ (M6×25) |
 | `l_bracket` | `leg_a`, `leg_b`, `width`, `thickness`, `hole_d`, `holes_in_long_leg`, `short_leg_holes` | 18363.8 mm³ |
@@ -394,7 +394,7 @@ out, which is what keeps a long running session from accumulating open documents
 ## Tests
 
 ```bash
-pytest        # 406 tests, no SolidWorks required
+pytest        # 426 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,
