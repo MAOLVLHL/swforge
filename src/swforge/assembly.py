@@ -24,7 +24,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .session import SwError, SwModel, SwSession, _callout, _com, member
+from .session import (
+    PLANE_ALIASES,
+    REFERENCE_PLANES,
+    SwError,
+    SwModel,
+    SwSession,
+    _callout,
+    _com,
+    member,
+)
 
 #: swMateType_e values used by this library.
 MATE_COINCIDENT = 0
@@ -32,9 +41,6 @@ MATE_DISTANCE = 5
 
 #: swAddMateError_e.swAddMateError_NoError; a successful mate reports 1, not 0.
 MATE_NO_ERROR = 1
-
-#: The three reference planes every generated part carries, in SolidWorks order.
-REFERENCE_PLANES = ("前视基准面", "上视基准面", "右视基准面")
 
 
 def _half_height_mm(document: Any) -> float:
@@ -296,7 +302,8 @@ class SwAssembly:
         nothing shorter, and a bare plane name would hit the assembly's own
         planes instead of the component's.
         """
-        qualified = f"{plane}@{component.qualified}"
+        name = PLANE_ALIASES.get(plane.strip().lower(), plane)
+        qualified = f"{name}@{component.qualified}"
         if not self._select(qualified, "PLANE", append):
             raise SwError(f"cannot select {qualified!r}")
         return qualified

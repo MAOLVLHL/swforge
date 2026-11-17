@@ -44,6 +44,11 @@ PLANE_ALIASES: dict[str, str] = {
     "右视基准面": RIGHT_PLANE,
 }
 
+#: The three reference planes every generated part carries, in SolidWorks order.
+#: Derived from the alias table so a new spelling cannot describe a plane this
+#: tuple has never heard of.
+REFERENCE_PLANES = (FRONT_PLANE, TOP_PLANE, RIGHT_PLANE)
+
 PLANE = "PLANE"
 SKETCH = "SKETCH"
 
