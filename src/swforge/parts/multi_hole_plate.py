@@ -68,28 +68,47 @@ def _check_holes_fit(v: dict[str, Any], positions: list[tuple[float, float]]) ->
     """
     hole_d = v["hole_d"]
     radius = hole_d / 2.0
+    length = v["length"]
+    width = v["width"]
     for x, z in positions:
+        spans = (
+            f"it spans {round(x - radius, 3):g} .. {round(x + radius, 3):g} mm in x and "
+            f"{round(z - radius, 3):g} .. {round(z + radius, 3):g} mm in z"
+        )
+        where = f"the {hole_d:g} mm hole at ({round(x, 3):g}, {round(z, 3):g})"
         if (
             x - radius < 0
-            or x + radius > v["length"]
+            or x + radius > length
             or z - radius < 0
-            or z + radius > v["width"]
+            or z + radius > width
         ):
             raise ValueError(
-                f"the {hole_d:g} mm hole at ({round(x, 3):g}, {round(z, 3):g}) "
-                f"breaks out of the "
-                f"{v['length']:g} x {v['width']:g} mm plate: it spans "
-                f"{round(x - radius, 3):g} .. {round(x + radius, 3):g} mm in x and "
-                f"{round(z - radius, 3):g} .. {round(z + radius, 3):g} mm in z"
+                f"{where} breaks out of the {length:g} x {width:g} mm plate: {spans}"
+            )
+        # A loop that only touches the outline leaves no wall for the cut to
+        # follow, and SolidWorks refuses the extrude rather than cutting it, so
+        # landing on the edge is already outside what this plate can drill.
+        if (
+            x - radius == 0
+            or x + radius == length
+            or z - radius == 0
+            or z + radius == width
+        ):
+            raise ValueError(
+                f"{where} lands on the edge of the {length:g} x {width:g} mm plate: "
+                f"{spans}"
             )
     for index, (x0, z0) in enumerate(positions):
         for x1, z1 in positions[index + 1 :]:
             distance = math.hypot(x1 - x0, z1 - z0)
-            if distance < hole_d:
+            # Two loops that meet are one slot: SolidWorks keeps both and cuts
+            # neither, so a distance equal to the diameter is already too close.
+            if distance <= hole_d:
                 raise ValueError(
                     f"the {hole_d:g} mm holes at ({round(x0, 3):g}, "
                     f"{round(z0, 3):g}) and ({round(x1, 3):g}, {round(z1, 3):g}) "
-                    f"are {round(distance, 3):g} mm apart"
+                    f"are {round(distance, 3):g} mm apart: at or under their own "
+                    f"diameter, so the two loops meet and cut one slot"
                 )
 
 

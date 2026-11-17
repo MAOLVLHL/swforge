@@ -409,6 +409,28 @@ def test_a_single_hole_is_centred_between_the_margins():
             },
         ),
         ("l_bracket", {"leg_a": 60, "leg_b": 40, "width": 40, "thickness": 5, "hole_d": -9}),
+        (
+            "l_bracket",
+            {
+                "leg_a": 36,
+                "leg_b": 40,
+                "width": 40,
+                "thickness": 5,
+                "hole_d": 30,
+                "holes_in_long_leg": 1,
+            },
+        ),
+        (
+            "l_bracket",
+            {
+                "leg_a": 200,
+                "leg_b": 40,
+                "width": 120,
+                "thickness": 5,
+                "hole_d": 95,
+                "holes_in_long_leg": 2,
+            },
+        ),
     ],
 )
 def test_a_builder_refuses_impossible_parameters_before_drawing(kind, params):
