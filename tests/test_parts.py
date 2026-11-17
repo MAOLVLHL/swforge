@@ -108,6 +108,108 @@ def test_l_bracket_counts_only_the_long_leg_holes_it_drills():
     assert removed == pytest.approx(-3 * math.pi / 4 * 81 * 5)
 
 
+def test_l_bracket_rejects_two_holes_that_meet():
+    """Two 95 mm loops 95 mm apart are one slot, and the sketch says two holes.
+
+    The spacing of two holes across a leg is (leg_a - 2T) / 2, so this is the
+    widest pair a bracket can hold at equality: anything closer and the first
+    hole is already inside the corner.
+    """
+    params = {
+        "leg_a": 200.0,
+        "leg_b": 40.0,
+        "width": 120.0,
+        "thickness": 5.0,
+        "hole_d": 95.0,
+        "holes_in_long_leg": 2,
+    }
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic("l_bracket", params)
+    message = str(excinfo.value)
+    assert "the 95 mm holes at (52.5, 60) and (147.5, 60) are 95 mm apart" in message
+    assert "cut one slot" in message
+
+
+def test_l_bracket_rejects_a_hole_that_runs_into_the_corner():
+    # A 30 mm hole on a 36 mm leg sits at x 18, so it spans 3 .. 33 mm and
+    # reaches back past the corner block that ends at x 5.  The short leg is a
+    # profile from x 0 to x 5, and this loop would start it on a void.
+    params = {
+        "leg_a": 36.0,
+        "leg_b": 40.0,
+        "width": 40.0,
+        "thickness": 5.0,
+        "hole_d": 30.0,
+        "holes_in_long_leg": 1,
+    }
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic("l_bracket", params)
+    message = str(excinfo.value)
+    assert "the 30 mm hole at (18, 20) runs into the short leg" in message
+    assert "cut from x 0 to x 5 mm" in message
+    assert "it spans 3 .. 33 mm in x" in message
+
+
+def test_l_bracket_keeps_a_hole_whose_edge_lands_on_the_corner():
+    # The far side of the corner is not a wall: a loop ending exactly at x = T
+    # still has the long leg under it from T onwards, and SolidWorks cuts this
+    # without complaint.  A 26 mm hole at x 18 spans 5 .. 31 mm, so its edge is
+    # on the corner face and one millimetre of it hangs over the void.
+    params = {
+        "leg_a": 36.0,
+        "leg_b": 40.0,
+        "width": 40.0,
+        "thickness": 5.0,
+        "hole_d": 26.0,
+        "holes_in_long_leg": 1,
+    }
+    solid = parts.analytic("l_bracket", params)
+    assert solid.volume_mm3 == pytest.approx(
+        36 * 40 * 5 + 5 * 40 * 40 - 5 * 40 * 5 - math.pi / 4 * 26**2 * 5
+    )
+
+
+def test_l_bracket_refuses_a_hole_that_breaks_the_far_end_too():
+    """The corner test is the only one needed, and this is why.
+
+    A hole wide enough to leave the far end of the leg has already left the
+    corner: the holes sit at the middle of the span from T to leg_a - T, so the
+    margin at the corner is never the larger of the two.  One test, two ends.
+    """
+    params = {
+        "leg_a": 36.0,
+        "leg_b": 40.0,
+        "width": 140.0,
+        "thickness": 5.0,
+        "hole_d": 100.0,
+        "holes_in_long_leg": 1,
+    }
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic("l_bracket", params)
+    assert "runs into the short leg" in str(excinfo.value)
+
+
+def test_l_bracket_does_not_need_a_width_test():
+    """hole_d is capped below 0.8 * width, so a centred hole cannot reach a side.
+
+    Naming the reason here keeps the cap and the missing check tied together: if
+    the cap is ever loosened, this is the test that says what the cap was for.
+    """
+    params = {
+        "leg_a": 100.0,
+        "leg_b": 40.0,
+        "width": 40.0,
+        "thickness": 5.0,
+        "hole_d": 31.0,
+        "holes_in_long_leg": 1,
+    }
+    # 31 mm is under 0.8 * 40 = 32, and the hole spans 4.5 .. 35.5 mm in z.
+    assert parts.analytic("l_bracket", params).volume_mm3 > 0
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic("l_bracket", dict(params, hole_d=32.0))
+    assert "too large for the bracket width" in str(excinfo.value)
+
+
 def test_l_bracket_rejects_impossible_geometry():
     with pytest.raises(ValueError):
         parts.analytic(
@@ -288,19 +390,57 @@ def test_plate_rejects_two_holes_that_overlap():
     )
 
 
-def test_plate_accepts_a_hole_whose_edge_lands_on_the_outline():
-    # A 9 mm hole centred 4.5 mm from the edge touches the outline without
-    # crossing it, which SolidWorks cuts without complaint.
+@pytest.mark.parametrize(
+    "length, width, rows, cols, margin, span",
+    [
+        (100, 20, 1, 2, 4.5, "it spans 0 .. 9 mm in x"),
+        (100, 20, 1, 2, 95.5, "it spans 91 .. 100 mm in x"),
+        (20, 100, 2, 1, 4.5, "0 .. 9 mm in z"),
+        (20, 100, 2, 1, 95.5, "91 .. 100 mm in z"),
+    ],
+)
+def test_plate_rejects_a_hole_whose_edge_lands_on_the_outline(
+    length, width, rows, cols, margin, span
+):
+    # A loop that touches the outline without crossing it used to be accepted,
+    # on the reasoning that a tangent loop is still a closed loop. SolidWorks
+    # answers "extrude of 5.0 mm failed": with no wall behind it the cut has
+    # nothing to follow, so the edge is already outside what this plate can
+    # drill. Each of the four sides is checked on its own, because a test that
+    # only touches the same edge cannot tell which comparison the code makes.
     params = {
-        "length": 100,
-        "width": 20,
+        "length": length,
+        "width": width,
         "thickness": 5,
         "hole_d": 9,
+        "rows": rows,
+        "cols": cols,
+        "margin": margin,
+    }
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic("multi_hole_plate", params)
+    message = str(excinfo.value)
+    assert "lands on the edge of the" in message, message
+    assert span in message, message
+
+
+def test_plate_rejects_two_holes_exactly_one_diameter_apart():
+    # Two 10 mm loops 10 mm apart meet at a single point: the sketch keeps both,
+    # the cut joins them into one slot and removes less than two holes' worth.
+    params = {
+        "length": 100,
+        "width": 40,
+        "thickness": 5,
+        "hole_d": 10,
         "rows": 1,
         "cols": 2,
-        "margin": 4.5,
+        "margin": 45,
     }
-    assert parts.analytic("multi_hole_plate", params).volume_mm3 > 0
+    with pytest.raises(ValueError) as excinfo:
+        parts.analytic("multi_hole_plate", params)
+    assert "the 10 mm holes at (45, 20) and (55, 20) are 10 mm apart" in str(
+        excinfo.value
+    )
 
 
 @pytest.mark.parametrize(

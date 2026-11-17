@@ -459,6 +459,23 @@ def test_verify_refuses_a_part_solidworks_could_not_machine(tmp_path, capsys):
     assert "Traceback" not in err
 
 
+def test_verify_refuses_a_bracket_whose_hole_eats_the_corner(tmp_path, capsys):
+    # The bracket had no layout check at all, so a hole wide enough to reach
+    # back over the corner block verified: the analytic volume subtracted it,
+    # and the short leg's profile would have started on the hole it made.
+    path = tmp_path / "corner.json"
+    path.write_text(
+        '{"kind": "l_bracket", "name": "bracket", "params": '
+        '{"leg_a": 36, "leg_b": 40, "width": 40, "thickness": 5, '
+        '"hole_d": 30, "holes_in_long_leg": 1}}',
+        encoding="utf-8",
+    )
+    assert main(["verify", str(path)]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error: spec 'bracket': the 30 mm hole at (18, 20) runs into")
+    assert "Traceback" not in err
+
+
 def test_a_size_the_catalogue_does_not_know_is_not_reported_as_missing(tmp_path, capsys):
     # catalog raises KeyError for an unknown designation, the builder raises the
     # same type for a missing parameter, and the two need opposite advice:
@@ -596,5 +613,4 @@ def test_draw_without_solidworks_is_exit_two(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_attach", lambda: None)
 
     assert main(["draw", "plate.sldprt"]) == 2
-
 

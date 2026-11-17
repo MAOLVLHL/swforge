@@ -149,9 +149,10 @@ SolidWorks opens a document.
 The impossible plate is the case the analytic answer cannot catch on its own: it used to print
 `V= -862.8 mm3` and exit 0. A hole that crosses the outline, two holes that meet, a bolt circle
 that runs into the bore or past the rim: SolidWorks drops the loop, cuts nothing, and the
-arithmetic goes on subtracting material that is still there. The plate and the flange now measure
-their own layout — the numbers in the message are the hole's span in millimetres, not just its
-centre — so `verify` reports the shape it cannot machine instead of a negative volume.
+arithmetic goes on subtracting material that is still there. The plate, the flange and the
+bracket now measure their own layout — the numbers in the message are the hole's span in
+millimetres, not just its centre — so `verify` reports the shape it cannot machine instead of a
+negative volume.
 
 2 means the run never started — a path you typed wrong, a file Notepad saved with a byte-order
 mark, a kind you misspelled, a parameter you left out, an assembly with no parts. 1 still means a
@@ -394,7 +395,7 @@ out, which is what keeps a long running session from accumulating open documents
 ## Tests
 
 ```bash
-pytest        # 426 tests, no SolidWorks required
+pytest        # 438 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,
