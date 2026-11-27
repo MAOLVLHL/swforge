@@ -28,6 +28,7 @@ from typing import Any, Iterator
 
 from . import parts
 from .geometry import Solid
+from .session import PLANE_ALIASES, REFERENCE_PLANES
 from .spec import PartSpec, SpecError, read_json
 
 #: Mate kinds accepted by AssemblySpec.mates; 0 distance means coincident.
@@ -158,6 +159,12 @@ class AssemblySpec:
                     )
             if mate.first == mate.second:
                 raise ValueError(f"instance {mate.first!r} cannot mate to itself")
+            if mate.plane.strip().lower() not in PLANE_ALIASES:
+                known = ", ".join(REFERENCE_PLANES)
+                raise ValueError(
+                    f"mate {mate.first!r} to {mate.second!r} names reference plane "
+                    f"{mate.plane!r}; known: {known}"
+                )
 
     # -- prediction -------------------------------------------------------
     def instance_volume_mm3(self, placement: Placement) -> float:

@@ -11,6 +11,7 @@ import pytest
 
 from swforge import parts
 from swforge.demo import BOLT_HOLES, HEAD_HEIGHT_M8, bolt_stack
+from swforge.session import FRONT_PLANE, RIGHT_PLANE, TOP_PLANE
 from swforge.spec import PartSpec, SpecError
 from swforge.stack import AssemblySpec, Mate, Placement, dump_assembly, load_assembly
 
@@ -233,3 +234,56 @@ def test_load_assembly_refuses_a_file_with_no_parts(tmp_path):
     with pytest.raises(SpecError) as caught:
         load_assembly(path)
     assert str(caught.value) == f"assembly file {path} has no parts; nothing to build"
+
+
+# -- a mate names a reference plane, and only three of those exist ---------
+#
+# validate() used to read everything about a mate except its plane, so a stack
+# whose planes could never be selected passed verify and assemble --dry-run
+# with exit 0 and only failed once a document was open.
+
+
+def _two_plates(plane):
+    return AssemblySpec(
+        name="bad",
+        parts={"120x80x6": _plate()},
+        placements=[Placement("i-1", "120x80x6"), Placement("i-2", "120x80x6")],
+        mates=[Mate("i-1", "i-2", plane=plane)],
+    )
+
+
+def test_validate_rejects_a_mate_on_a_plane_that_does_not_exist():
+    with pytest.raises(ValueError) as caught:
+        _two_plates("GroundPlane").validate()
+    message = str(caught.value)
+    assert "GroundPlane" in message
+    for plane in (FRONT_PLANE, TOP_PLANE, RIGHT_PLANE):
+        assert plane in message, (
+            "the error has to name the planes that do exist, or whoever wrote the "
+            "file is left guessing which spelling SolidWorks wanted"
+        )
+
+
+def test_validate_rejects_a_mate_on_an_empty_plane():
+    # The field has a default, so an empty name is always a mistake and never
+    # another way of spelling the default.
+    with pytest.raises(ValueError, match="reference plane"):
+        _two_plates("").validate()
+
+
+@pytest.mark.parametrize(
+    "plane",
+    ["top", "Top Plane", " TOP ", "上视基准面", "front", "right plane"],
+)
+def test_validate_accepts_every_spelling_of_a_reference_plane(plane):
+    _two_plates(plane).validate()
+
+
+def test_a_plane_read_from_json_is_checked_like_any_other():
+    spec = _two_plates("top")
+    again = AssemblySpec.from_dict(spec.to_dict())
+    assert again.mates[0].plane == "top", (
+        "the spec keeps what the file said; resolving the alias belongs at the "
+        "SolidWorks boundary, so a round trip does not rewrite the file"
+    )
+    again.validate()
