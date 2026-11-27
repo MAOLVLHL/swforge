@@ -70,7 +70,53 @@ def _validated(params: dict[str, Any]) -> dict[str, float]:
             "and this builder only extrudes top-plane profiles along Y; "
             "short_leg_holes must be 0"
         )
+    if values["hole_d"]:
+        _check_holes_fit(values, _hole_positions(values))
     return values
+
+
+def _check_holes_fit(v: dict[str, float], positions: list[tuple[float, float]]) -> None:
+    """Refuse a drill pattern the long leg cannot hold.
+
+    Each hole is a loop in the same top-plane profile as the leg, so it has to
+    sit inside that rectangle: a loop that lands on the outline leaves no wall
+    for the cut to follow and SolidWorks drops it, keeping the sketch and
+    cutting nothing while the arithmetic subtracts material.  The corner is the
+    one end that needs saying out loud, because the short leg is a second
+    profile stretching from x 0 to x T and a hole reaching into it makes that
+    profile start on a void.  The far end needs no test of its own: the holes
+    are spread evenly across the span from T to leg_a - T, so their margin at
+    the corner end is always the smaller of the two.
+
+    The width is not checked here either: hole_d is already held below
+    0.8 * width, which keeps a hole centred on the width clear of both sides.
+    """
+    hole_d = v["hole_d"]
+    radius = hole_d / 2.0
+    thickness = v["thickness"]
+    for x, z in positions:
+        spans = (
+            f"it spans {round(x - radius, 3):g} .. {round(x + radius, 3):g} mm in x and "
+            f"{round(z - radius, 3):g} .. {round(z + radius, 3):g} mm in z"
+        )
+        if x - radius < thickness:
+            raise ValueError(
+                f"the {hole_d:g} mm hole at ({round(x, 3):g}, {round(z, 3):g}) "
+                f"runs into the short leg, which is cut from x 0 to x "
+                f"{thickness:g} mm: {spans}"
+            )
+    for index, (x0, z0) in enumerate(positions):
+        for x1, z1 in positions[index + 1 :]:
+            distance = math.hypot(x1 - x0, z1 - z0)
+            # Two loops that meet are one slot: SolidWorks keeps both and cuts
+            # neither, so a distance equal to the diameter is already too close.
+            if distance <= hole_d:
+                raise ValueError(
+                    f"the {hole_d:g} mm holes at ({round(x0, 3):g}, "
+                    f"{round(z0, 3):g}) and ({round(x1, 3):g}, {round(z1, 3):g}) "
+                    f"are {round(distance, 3):g} mm apart: at or under their own "
+                    f"diameter, so the two loops meet and cut one slot"
+                )
 
 
 def analytic(params: dict[str, Any]) -> Solid:
