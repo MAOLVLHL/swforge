@@ -417,6 +417,38 @@ def test_an_assembly_that_names_an_unknown_part_is_rejected_before_solidworks(
     assert "refers to unknown part 'ghost'" in err
     assert "known:" in err
 
+def test_an_assembly_with_nothing_placed_is_rejected_before_solidworks(tmp_path, capsys):
+    # An empty assembly predicted zero volume and a 0x0x0 envelope, which the
+    # comparison accepted, so verify and assemble --dry-run both exited 0.
+    from swforge.demo import bolt_stack
+
+    payload = bolt_stack().to_dict()
+    payload["placements"] = []
+    payload["mates"] = []
+    path = tmp_path / "unplaced.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert main(["verify", str(path), "--assembly"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith(f"error: assembly file {path}: assembly 'bolt_stack' "), err
+    assert "has no placements" in err
+
+
+def test_a_part_that_no_instance_places_is_rejected_before_solidworks(tmp_path, capsys):
+    # The part used to be built and written, then dropped: nothing inserted it,
+    # so its parameters were never read either.
+    from swforge.demo import bolt_stack
+
+    payload = bolt_stack().to_dict()
+    payload["placements"] = [
+        placement for placement in payload["placements"] if placement["part"] != "M8x40"
+    ]
+    payload["mates"] = []
+    path = tmp_path / "spare.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert main(["assemble", str(path), "--dry-run"]) == 2
+    err = capsys.readouterr().err
+    assert "part 'M8x40' is never placed" in err
+
 
 def test_an_assembly_that_names_an_unknown_plane_is_rejected_before_solidworks(
     tmp_path, capsys

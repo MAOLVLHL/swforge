@@ -139,7 +139,14 @@ class AssemblySpec:
                 raise ValueError(
                     f"part key {key!r} must equal its spec name {spec.name!r}"
                 )
+        if not self.placements:
+            # predict() answers zero volume and a 0x0x0 envelope for this, and
+            # the build that follows opens a document and inserts nothing.
+            raise ValueError(
+                f"assembly {self.name!r} has no placements; nothing to build"
+            )
         seen: set[str] = set()
+        placed: set[str] = set()
         for placement in self.placements:
             if placement.part not in self.parts:
                 known = ", ".join(self.parts) or "none"
@@ -150,6 +157,15 @@ class AssemblySpec:
             if placement.instance in seen:
                 raise ValueError(f"duplicate instance name {placement.instance!r}")
             seen.add(placement.instance)
+            placed.add(placement.part)
+        for key in self.parts:
+            if key not in placed:
+                # Nothing inserts it, so nothing measures it and build_assembly()
+                # wrote a part file the assembly then dropped.
+                raise ValueError(
+                    f"part {key!r} is never placed; add an instance for it or "
+                    f"drop it from the assembly"
+                )
         for mate in self.mates:
             for side in (mate.first, mate.second):
                 if side not in seen:

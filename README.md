@@ -155,9 +155,10 @@ millimetres, not just its centre — so `verify` reports the shape it cannot mac
 negative volume.
 
 2 means the run never started — a path you typed wrong, a file Notepad saved with a byte-order
-mark, a kind you misspelled, a parameter you left out, an assembly with no parts. 1 still means a
-build ran and disagreed with its analytic answer. Keeping those apart is what lets a script retry
-on 1 and stop on 2, so `verify` answers for the file alone, with no CAD session involved.
+mark, a kind you misspelled, a parameter you left out, an assembly with no parts in it or with a
+part nothing places. 1 still means a build ran and disagreed with its analytic answer. Keeping
+those apart is what lets a script retry on 1 and stop on 2, so `verify` answers for the file
+alone, with no CAD session involved.
 
 A UTF-8 byte-order mark is accepted rather than rejected: `Set-Content` and Notepad both write
 one, and calling that file broken is the most confusing thing a Windows tool can do to a user
@@ -240,6 +241,12 @@ coincident on a named reference plane:
 ```python
 Mate(first="bolt-1", second="plate-1", plane="上视基准面", distance_mm=5.3, flip=True)
 ```
+
+Every part in `parts` has to be placed at least once. A part that nothing inserts is not
+decoration: `build_assembly` built it, wrote the `.sldprt`, then dropped it, so the run paid for
+a part whose parameters were never read — an assembly holding a `length: 0` bolt that no
+placement used passed `verify` with exit 0. `validate()` now rejects both ends of that before a
+document is opened: an assembly with no placements, and a part that no placement uses.
 
 `flip` is not decoration. A distance mate constrains the *magnitude* only, so SolidWorks picks
 a side — and by default it picks the reversed one. The showcase bolts were mathematically
@@ -402,7 +409,7 @@ out, which is what keeps a long running session from accumulating open documents
 ## Tests
 
 ```bash
-pytest        # 449 tests, no SolidWorks required
+pytest        # 456 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,
