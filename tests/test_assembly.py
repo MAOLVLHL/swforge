@@ -172,6 +172,19 @@ def test_select_plane_qualifies_with_component_and_assembly(fake_app, fake_com):
     )
 
 
+def test_select_plane_resolves_the_alias_before_qualifying(fake_app, fake_com):
+    # A spec may spell the plane "top"; SolidWorks only knows the localised
+    # name, and it only accepts the qualified form, so the two fixes have to
+    # happen in that order.
+    asmb = SwAssembly(FakeAsmModel(), fake_app)
+    comp = Component("bolt-1", "bolt-1@stack", make_component(), Path(r"C:\out\bolt.sldprt"))
+    assert asmb.select_plane(comp, "top") == "上视基准面@bolt-1@stack"
+    assert asmb.select_plane(comp, " TOP ") == "上视基准面@bolt-1@stack", (
+        "the session strips and lowers the name before the lookup, so the "
+        "assembly has to normalise the same way or the two disagree about ' TOP '"
+    )
+
+
 def test_world_box_maps_the_local_box_through_the_transform():
     comp = Component(
         "bolt-1",

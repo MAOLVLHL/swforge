@@ -418,6 +418,26 @@ def test_an_assembly_that_names_an_unknown_part_is_rejected_before_solidworks(
     assert "known:" in err
 
 
+def test_an_assembly_that_names_an_unknown_plane_is_rejected_before_solidworks(
+    tmp_path, capsys
+):
+    # The plane is the one field of a mate that only SolidWorks can resolve, so
+    # a typo in it used to survive verify and assemble --dry-run untouched and
+    # then fail with "cannot select <plane>@<component>" once a document was open.
+    from swforge.demo import bolt_stack
+
+    spec = bolt_stack()
+    payload = spec.to_dict()
+    payload["mates"][0]["plane"] = "GroundPlane"
+    path = tmp_path / "plane.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert main(["assemble", str(path), "--dry-run"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "GroundPlane" in captured.err
+    assert "\u4e0a\u89c6\u57fa\u51c6\u9762" in captured.err
+
+
 # -- a parameter of the wrong type is the same kind of mistake --------------
 #
 # The section above covers the file: missing, unreadable, not JSON.  These cover
