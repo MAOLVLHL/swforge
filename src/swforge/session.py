@@ -170,33 +170,44 @@ class SwSession:
     def drawing_template(self) -> str:
         return self._template(10, "drawing")
 
+    def _created(self, template: str, what: str) -> Any:
+        """The document NewDocument just made, or a refusal naming the risk.
+
+        NewDocument answering None used to fall back to ActiveDoc without a
+        second look.  That document is usually the user's own work: the build
+        then draws its features into it and the finally block closes it, so a
+        refused creation lost whatever the user had open.  An active document
+        is only a valid answer while it is untitled: a brand-new document has
+        no path yet, while a named one is certainly the user's.
+        """
+        made = self.app.NewDocument(template, 0, 0, 0)
+        if made is not None:
+            return made
+        active = member(self.app, "ActiveDoc", default=None)
+        if active is None:
+            raise SwError(f"SolidWorks refused to create a new {what}")
+        path = str(member(active, "GetPathName", default=""))
+        if path:
+            raise SwError(
+                f"SolidWorks refused to create a new {what}; "
+                f"the active document is {path}"
+            )
+        return active
+
     def new_part(self) -> "SwModel":
-        model = self.app.NewDocument(self.template, 0, 0, 0) or self.app.ActiveDoc
-        if model is None:
-            raise SwError("SolidWorks refused to create a new part")
-        return SwModel(model, self.app)
+        return SwModel(self._created(self.template, "part"), self.app)
 
     def new_assembly(self) -> Any:
         from .assembly import SwAssembly
 
-        model = (
-            self.app.NewDocument(self.assembly_template, 0, 0, 0)
-            or self.app.ActiveDoc
-        )
-        if model is None:
-            raise SwError("SolidWorks refused to create a new assembly")
-        return SwAssembly(model, self.app)
+        return SwAssembly(self._created(self.assembly_template, "assembly"), self.app)
 
     def new_drawing(self, template: str | None = None) -> Any:
         from .drawing import SwDrawing
 
-        model = (
-            self.app.NewDocument(template or self.drawing_template, 0, 0, 0)
-            or self.app.ActiveDoc
+        return SwDrawing(
+            self._created(template or self.drawing_template, "drawing"), self.app
         )
-        if model is None:
-            raise SwError("SolidWorks refused to create a new drawing")
-        return SwDrawing(model, self.app)
 
     def open_document(self, path: str | Path, doctype: int = 1) -> Any:
         """Open a document and return the model itself.
