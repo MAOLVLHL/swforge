@@ -582,6 +582,13 @@ def test_an_assembly_with_an_unusable_parameter_is_rejected_before_solidworks(
 # with one sentence on stderr.
 
 
+def _model_file(tmp_path, name="plate.sldprt"):
+    """A model path that exists, so a test about views is not about the path."""
+    path = tmp_path / name
+    path.write_bytes(b"")
+    return path
+
+
 def _fake_draw(monkeypatch, seen, files=None):
     from swforge import cli
 
@@ -602,11 +609,13 @@ def test_draw_prints_the_files_it_wrote(monkeypatch, tmp_path, capsys):
     seen = {}
     _fake_draw(monkeypatch, seen)
 
-    assert main(["draw", str(tmp_path / "plate.sldprt"), "-o", "out"]) == 0
+    path = _model_file(tmp_path)
+    assert main(["draw", str(path), "-o", "out"]) == 0
 
     out = capsys.readouterr().out
     assert "drawing: build/drawing_plate.slddrw" in out
     assert "dimensions: 4" in out
+    assert seen["model"] == path.resolve(), "draw gets the path that was checked"
     assert seen["out_dir"] == "out"
     assert seen["dimensions"] is True
 
@@ -618,7 +627,8 @@ def test_draw_passes_the_view_flag_through_whole(monkeypatch, tmp_path):
     seen = {}
     _fake_draw(monkeypatch, seen)
 
-    assert main(["draw", str(tmp_path / "plate.sldprt"), "--views", "iso, front"]) == 0
+    path = _model_file(tmp_path)
+    assert main(["draw", str(path), "--views", "iso, front"]) == 0
     assert seen["views"] == "iso, front"
 
 
@@ -626,20 +636,20 @@ def test_no_dimensions_reaches_draw(monkeypatch, tmp_path):
     seen = {}
     _fake_draw(monkeypatch, seen)
 
-    assert main(["draw", str(tmp_path / "p.sldprt"), "--no-dimensions"]) == 0
+    assert main(["draw", str(_model_file(tmp_path, "p.sldprt")), "--no-dimensions"]) == 0
     assert seen["dimensions"] is False
 
 
 def test_a_misspelled_view_is_one_sentence_and_exit_two(monkeypatch, tmp_path, capsys):
     # draw itself is not patched: the real one is what rejects the name.  Only
-    # the SolidWorks handle is faked, and the model path is a file that does not
-    # exist -- so if the check ever moved below open_document, this test would
-    # fail with a different error instead of passing.
+    # the SolidWorks handle is faked, and the model path does exist -- so the
+    # refusal can only come from the view list, and if that check ever moved
+    # below open_document this test would fail with a different error.
     from swforge import cli
 
     monkeypatch.setattr(cli, "_attach", lambda: object())
 
-    path = tmp_path / "plate.sldprt"
+    path = _model_file(tmp_path)
     assert main(["draw", str(path), "--views", "frnt"]) == 2
     captured = capsys.readouterr()
     assert captured.err == (
@@ -653,16 +663,141 @@ def test_an_empty_view_flag_is_exit_two_not_an_empty_sheet(monkeypatch, tmp_path
 
     monkeypatch.setattr(cli, "_attach", lambda: object())
 
-    path = tmp_path / "plate.sldprt"
+    path = _model_file(tmp_path)
     assert main(["draw", str(path), "--views", ""]) == 2
     err = capsys.readouterr().err
     assert err.startswith("error: no drawing views to place; pick at least one of "), err
 
 
-def test_draw_without_solidworks_is_exit_two(monkeypatch, capsys):
+def test_draw_without_solidworks_is_exit_two(monkeypatch, tmp_path, capsys):
     from swforge import cli
 
     monkeypatch.setattr(cli, "_attach", lambda: None)
 
-    assert main(["draw", "plate.sldprt"]) == 2
+    assert main(["draw", str(_model_file(tmp_path))]) == 2
 
+
+# -- the paths a run is handed are checked before SolidWorks is started ------
+#
+# Every command below takes a path from the command line.  Two of them used to
+# learn the path was wrong only after a CAD session had been attached: draw
+# answered "SolidWorks is not running" on a machine that has it (and died with a
+# com_error traceback when it did), and a -o that names a file surfaced as a
+# FileExistsError from the middle of a batch.  A path that cannot work is an
+# argument mistake, so it is exit 2 with one sentence, and _attach is never
+# reached -- the stub below is what proves that, not the message alone.
+
+
+def _no_attach(monkeypatch):
+    """Fail loudly if the run attaches before it has looked at its paths."""
+    from swforge import cli
+
+    def attach():
+        raise AssertionError("SolidWorks was attached before the path was checked")
+
+    monkeypatch.setattr(cli, "_attach", attach)
+
+
+def test_draw_answers_a_missing_model_before_it_attaches(
+    monkeypatch, tmp_path, capsys
+):
+    _no_attach(monkeypatch)
+    missing = tmp_path / "nope.sldprt"
+
+    assert main(["draw", str(missing)]) == 2
+
+    captured = capsys.readouterr()
+    assert captured.err == f"error: model file not found: {missing.resolve()}\n"
+    assert captured.out == ""
+
+
+def test_draw_refuses_a_file_that_is_a_step_export(monkeypatch, tmp_path, capsys):
+    # The .step is what build wrote next to the model; drawing it would reach
+    # COM and fail there with "cannot open ... (errors=0, warnings=0)".
+    _no_attach(monkeypatch)
+    exported = tmp_path / "plate.step"
+    exported.write_text("ISO-10303-21;", encoding="utf-8")
+
+    assert main(["draw", str(exported)]) == 2
+
+    err = capsys.readouterr().err
+    assert err.startswith(f"error: model file {exported.resolve()} is not a .sldprt")
+    assert "not the .step the build exports" in err
+
+
+def test_draw_refuses_a_directory_named_like_a_model(monkeypatch, tmp_path, capsys):
+    _no_attach(monkeypatch)
+    directory = tmp_path / "plate.sldprt"
+    directory.mkdir()
+
+    assert main(["draw", str(directory)]) == 2
+    assert capsys.readouterr().err == (
+        f"error: model path is not a file: {directory.resolve()}\n"
+    )
+
+
+def test_draw_refuses_an_output_path_that_is_a_file(monkeypatch, tmp_path, capsys):
+    _no_attach(monkeypatch)
+    notes = tmp_path / "notes.txt"
+    notes.write_text("scratch", encoding="utf-8")
+
+    assert main(["draw", str(_model_file(tmp_path)), "-o", str(notes)]) == 2
+
+    assert capsys.readouterr().err == (
+        f"error: output path {notes} is unusable: {notes} is a file\n"
+    )
+
+
+def test_build_refuses_an_output_path_that_is_a_file(monkeypatch, tmp_path, capsys):
+    _no_attach(monkeypatch)
+    spec = tmp_path / "showcase.json"
+    dump_specs(showcase(), spec)
+    notes = tmp_path / "notes.txt"
+    notes.write_text("scratch", encoding="utf-8")
+
+    assert main(["build", str(spec), "-o", str(notes)]) == 2
+
+    err = capsys.readouterr().err
+    assert err == f"error: output path {notes} is unusable: {notes} is a file\n"
+    assert "[PASS]" not in err and "[FAIL]" not in err, "no part was built"
+
+
+def test_assemble_refuses_an_output_path_that_is_a_file(
+    monkeypatch, tmp_path, capsys
+):
+    _no_attach(monkeypatch)
+    spec = tmp_path / "bolt_stack.json"
+    dump_assembly(bolt_stack(), spec)
+    notes = tmp_path / "notes.txt"
+    notes.write_text("scratch", encoding="utf-8")
+
+    assert main(["assemble", str(spec), "-o", str(notes)]) == 2
+    err = capsys.readouterr().err
+    assert err == f"error: output path {notes} is unusable: {notes} is a file\n"
+
+
+def test_an_output_path_below_a_file_is_refused_too(monkeypatch, tmp_path, capsys):
+    # save() would reach mkdir(parents=True) and raise NotADirectoryError there.
+    _no_attach(monkeypatch)
+    spec = tmp_path / "showcase.json"
+    dump_specs(showcase(), spec)
+    notes = tmp_path / "notes.txt"
+    notes.write_text("scratch", encoding="utf-8")
+    under = notes / "build"
+
+    assert main(["build", str(spec), "-o", str(under)]) == 2
+
+    assert capsys.readouterr().err == (
+        f"error: output path {under} is unusable: {notes} is a file\n"
+    )
+
+
+def test_a_dry_run_still_answers_without_looking_at_the_output_path(tmp_path, capsys):
+    # --dry-run opens no document and writes no file, so a -o it would never use
+    # is not an argument mistake; the check stays on the path that builds.
+    spec = tmp_path / "showcase.json"
+    dump_specs(showcase(), spec)
+    notes = tmp_path / "notes.txt"
+    notes.write_text("scratch", encoding="utf-8")
+
+    assert main(["build", str(spec), "-o", str(notes), "--dry-run"]) == 0

@@ -137,6 +137,10 @@ $ swforge build badsize.json
 error: spec 'w': washer cannot use these parameters: 'int' object has no attribute 'upper'
 $ swforge verify too_tight.json
 error: spec 'plate': the 9 mm hole at (2, 2) breaks out of the 20 x 20 mm plate: it spans -2.5 .. 6.5 mm in x and -2.5 .. 6.5 mm in z
+$ swforge draw build/plate.step
+error: model file /work/build/plate.step is not a .sldprt or .sldasm; draw reads the model, not the .step the build exports
+$ swforge build showcase.json -o notes.txt
+error: output path notes.txt is unusable: notes.txt is a file
 ```
 
 The wrong-size one is the case a schema check cannot catch: the file is valid JSON, the key is
@@ -146,6 +150,15 @@ spelled right, and the value is simply not a size. `swforge.parts` raises `Param
 check over every part of an assembly, so a stack that cannot be built is refused before
 SolidWorks opens a document.
 
+The last two are about the paths rather than the file, and they used to be answered late.
+`draw` attached SolidWorks before it looked at its argument, so a typo in the model name came
+back as *SolidWorks is not running* on a machine that has it, and a `.step` reached COM and failed
+there as "cannot open ... (errors=0, warnings=0)". A `-o` that names a file surfaced as a
+`FileExistsError` from the middle of a batch, after the part had been built, which the CLI printed
+as a build failure. Both are now refused before the attach, and `draw` checks its model the same
+way for a library caller: a missing file, a directory, or the `.step` the build just exported is
+named as the argument it is.
+
 The impossible plate is the case the analytic answer cannot catch on its own: it used to print
 `V= -862.8 mm3` and exit 0. A hole that crosses the outline, two holes that meet, a bolt circle
 that runs into the bore or past the rim: SolidWorks drops the loop, cuts nothing, and the
@@ -154,9 +167,10 @@ bracket now measure their own layout — the numbers in the message are the hole
 millimetres, not just its centre — so `verify` reports the shape it cannot machine instead of a
 negative volume.
 
-2 means the run never started — a path you typed wrong, a file Notepad saved with a byte-order
-mark, a kind you misspelled, a parameter you left out, an assembly with no parts in it or with a
-part nothing places. 1 still means a build ran and disagreed with its analytic answer. Keeping
+2 means the run never started — a path you typed wrong, a model that is not a `.sldprt` or
+`.sldasm`, an output directory that is a file, a file Notepad saved with a byte-order mark, a kind
+you misspelled, a parameter you left out, an assembly with no parts in it or with a part nothing
+places. 1 still means a build ran and disagreed with its analytic answer. Keeping
 those apart is what lets a script retry on 1 and stop on 2, so `verify` answers for the file
 alone, with no CAD session involved.
 
@@ -409,7 +423,7 @@ out, which is what keeps a long running session from accumulating open documents
 ## Tests
 
 ```bash
-pytest        # 456 tests, no SolidWorks required
+pytest        # 468 tests, no SolidWorks required
 ```
 
 The builders are covered without a CAD session: `tests/fakebrep.py` records the sketch,

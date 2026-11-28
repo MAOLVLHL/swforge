@@ -10,7 +10,7 @@ from typing import Any, Sequence
 
 from . import catalog, parts
 from .demo import bolt_stack, showcase
-from .generate import build_assembly, draw, generate, reuse_part
+from .generate import build_assembly, draw, generate, model_file, reuse_part
 from .spec import PartSpec, SpecError, dump_specs, load_specs
 from .stack import AssemblySpec, dump_assembly, load_assembly
 
@@ -230,6 +230,27 @@ def _build_specs(
     return failures
 
 
+def _require_out_dir(out: str) -> None:
+    """Refuse an output path that cannot become a directory, before COM.
+
+    save() creates the directory when it writes -- which is after the part has
+    been built.  So "-o notes.txt" surfaced as a FileExistsError from the middle
+    of a batch (a build failure, exit 1) and as a traceback out of draw, for a
+    mistake that was visible before either started.  Any existing ancestor that
+    is a file makes the whole path unusable, so "notes.txt" and
+    "notes.txt/build" get the same sentence.
+    """
+    target = Path(out)
+    for candidate in (target, *target.parents):
+        if not candidate.exists():
+            continue
+        if not candidate.is_dir():
+            raise SpecError(
+                f"output path {target} is unusable: {candidate} is a file"
+            )
+        return
+
+
 def _load_assembly(path: str):
     """Load an assembly and validate it, so a bad one fails before SolidWorks.
 
@@ -320,6 +341,10 @@ def _run(args: argparse.Namespace) -> int:
         print("\n".join(assembly.summary()))
         if args.dry_run:
             return 0
+        # Checked before the attach: a path that cannot hold the output is an
+        # argument mistake, and the parts would otherwise be built in
+        # SolidWorks before the first save found out.
+        _require_out_dir(args.out)
         session = _attach()
         if session is None:
             return ARG_ERROR
@@ -344,6 +369,12 @@ def _run(args: argparse.Namespace) -> int:
         return 0 if result.ok else 1
 
     if args.command == "draw":
+        # Both paths are checked before the attach.  draw() checks them again
+        # for a caller that skips the CLI, but only here can the answer arrive
+        # without a CAD session -- and on a machine without SolidWorks a typo
+        # used to be reported as "SolidWorks is not running".
+        model = model_file(args.model)
+        _require_out_dir(args.out)
         session = _attach()
         if session is None:
             return ARG_ERROR
@@ -352,7 +383,7 @@ def _run(args: argparse.Namespace) -> int:
         # same answer every other bad argument gets.
         files = draw(
             session,
-            args.model,
+            model,
             out_dir=args.out,
             views=args.views,
             sheet=args.sheet,
@@ -368,6 +399,7 @@ def _run(args: argparse.Namespace) -> int:
     _print_plan(specs)
     if args.dry_run:
         return 0
+    _require_out_dir(args.out)
 
     session = _attach()
     if session is None:

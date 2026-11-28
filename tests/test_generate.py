@@ -505,6 +505,13 @@ class FakeDrawingDoc:
             raise self.close_error
 
 
+def _draw_model(tmp_path, name="plate.sldprt"):
+    """A model file that exists, so a draw test fails on what it is testing."""
+    path = tmp_path / name
+    path.write_bytes(b"")
+    return path
+
+
 def _draw_session(drawing, model=None, new_drawing=None):
     events = []
     session = SimpleNamespace(
@@ -536,7 +543,7 @@ def test_draw_dimensions_each_view_as_it_is_placed(tmp_path, monkeypatch):
     )
 
     files = generate.draw(
-        _draw_session(drawing), tmp_path / "plate.sldprt", out_dir=str(tmp_path)
+        _draw_session(drawing), _draw_model(tmp_path), out_dir=str(tmp_path)
     )
 
     assert len(drawing.calls) == 4, "four views, none of them skipped"
@@ -563,7 +570,7 @@ def test_draw_can_leave_the_views_unannotated(tmp_path, monkeypatch):
 
     files = generate.draw(
         _draw_session(drawing),
-        tmp_path / "plate.sldprt",
+        _draw_model(tmp_path),
         out_dir=str(tmp_path),
         dimensions=False,
     )
@@ -632,7 +639,7 @@ def test_draw_refuses_a_bad_view_before_it_opens_the_model(tmp_path, monkeypatch
     )
 
     with pytest.raises(SpecError):
-        generate.draw(session, tmp_path / "plate.sldprt", views=["frnt"])
+        generate.draw(session, _draw_model(tmp_path), views=["frnt"])
 
     assert opened == [], "nothing was opened, so no document is left half made"
 
@@ -672,7 +679,7 @@ def test_draw_closes_the_drawing_before_the_model_it_draws(tmp_path, monkeypatch
 
     generate.draw(
         _draw_session(drawing, model=model),
-        tmp_path / "plate.sldprt",
+        _draw_model(tmp_path),
         out_dir=str(tmp_path),
     )
 
@@ -698,7 +705,7 @@ def test_a_failed_save_still_closes_both_documents(tmp_path, monkeypatch):
     with pytest.raises(SwError) as error:
         generate.draw(
             _draw_session(drawing, model=model),
-            tmp_path / "plate.sldprt",
+            _draw_model(tmp_path),
             out_dir=str(tmp_path),
         )
 
@@ -721,7 +728,7 @@ def test_a_failed_pdf_export_still_closes_both_documents(tmp_path, monkeypatch):
     with pytest.raises(SwError) as error:
         generate.draw(
             _draw_session(drawing, model=model),
-            tmp_path / "plate.sldprt",
+            _draw_model(tmp_path),
             out_dir=str(tmp_path),
         )
 
@@ -745,7 +752,7 @@ def test_a_view_that_will_not_place_still_closes_both_documents(tmp_path, monkey
     with pytest.raises(SwError):
         generate.draw(
             _draw_session(drawing, model=model),
-            tmp_path / "plate.sldprt",
+            _draw_model(tmp_path),
             out_dir=str(tmp_path),
         )
 
@@ -763,7 +770,7 @@ def test_a_drawing_that_refuses_to_close_does_not_strand_the_model(tmp_path, mon
     with pytest.raises(SwError) as error:
         generate.draw(
             _draw_session(drawing, model=model),
-            tmp_path / "plate.sldprt",
+            _draw_model(tmp_path),
             out_dir=str(tmp_path),
         )
 
@@ -785,7 +792,7 @@ def test_a_session_that_cannot_make_a_drawing_still_closes_the_model(tmp_path, m
     session = _draw_session(None, model=model, new_drawing=no_drawing)
 
     with pytest.raises(SwError):
-        generate.draw(session, tmp_path / "plate.sldprt", out_dir=str(tmp_path))
+        generate.draw(session, _draw_model(tmp_path), out_dir=str(tmp_path))
 
     assert log == ["model"], "there was no drawing to close, and the model still goes back"
     assert model.closed
@@ -966,3 +973,58 @@ def test_a_part_only_build_closes_even_with_the_step_turned_off(tmp_path, monkey
 
     assert list(result.files) == ["part"]
     assert models[0].closes == 1, "no export at all still leaves a document to close"
+
+# -- the model a drawing is made from is checked before a document is opened --
+
+
+def test_a_model_path_that_is_not_there_is_named_not_handed_to_com(tmp_path):
+    from swforge.generate import draw, model_file
+    from swforge.spec import SpecError
+
+    missing = tmp_path / "nope.sldprt"
+
+    with pytest.raises(SpecError) as raised:
+        model_file(missing)
+    assert str(raised.value) == f"model file not found: {missing.resolve()}"
+
+    # draw() reaches the same gate, so a library caller gets the sentence too --
+    # the bare object() would raise AttributeError if COM were touched first.
+    with pytest.raises(SpecError, match="model file not found"):
+        draw(object(), missing)
+
+
+def test_a_step_export_is_not_a_drawing_source(tmp_path):
+    from swforge.generate import model_file
+    from swforge.spec import SpecError
+
+    exported = tmp_path / "plate.step"
+    exported.write_text("ISO-10303-21;", encoding="utf-8")
+
+    with pytest.raises(SpecError) as raised:
+        model_file(exported)
+
+    assert str(raised.value).startswith(f"model file {exported.resolve()} is not a")
+    assert ".sldprt or .sldasm" in str(raised.value)
+
+
+def test_a_directory_named_like_a_model_is_refused(tmp_path):
+    from swforge.generate import model_file
+    from swforge.spec import SpecError
+
+    directory = tmp_path / "flange.sldprt"
+    directory.mkdir()
+
+    with pytest.raises(SpecError) as raised:
+        model_file(directory)
+
+    assert str(raised.value) == f"model path is not a file: {directory.resolve()}"
+
+
+def test_both_model_suffixes_are_accepted_in_any_case(tmp_path):
+    from swforge.generate import model_file
+
+    for name in ("Plate.SLDPRT", "assembly.SLDASM"):
+        model = tmp_path / name
+        model.write_bytes(b"")
+
+        assert model_file(model) == model.resolve()
