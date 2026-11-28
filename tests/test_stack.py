@@ -141,6 +141,37 @@ def test_validate_rejects_an_empty_assembly():
         AssemblySpec(name="empty").validate()
 
 
+def test_validate_rejects_an_assembly_with_nothing_placed():
+    spec = AssemblySpec(name="bad", parts={"120x80x6": _plate()})
+    with pytest.raises(ValueError, match="has no placements"):
+        spec.validate()
+
+
+def test_validate_rejects_a_part_that_no_instance_places():
+    spec = AssemblySpec(
+        name="bad",
+        parts={"120x80x6": _plate(), "M8x40": _bolt()},
+        placements=[Placement("plate-1", "120x80x6")],
+    )
+    with pytest.raises(ValueError, match="part 'M8x40' is never placed"):
+        spec.validate()
+
+
+def test_validate_accepts_a_part_that_one_instance_places():
+    # A part may be placed many times (the showcase bolts are), so the check
+    # counts parts that appear nowhere, not placements per part.
+    spec = AssemblySpec(
+        name="ok",
+        parts={"120x80x6": _plate(), "M8x40": _bolt()},
+        placements=[
+            Placement("plate-1", "120x80x6"),
+            Placement("bolt-1", "M8x40"),
+            Placement("bolt-2", "M8x40"),
+        ],
+    )
+    spec.validate()
+
+
 def test_round_trip_through_json(tmp_path):
     spec = bolt_stack()
     path = tmp_path / "stack.json"

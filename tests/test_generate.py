@@ -12,6 +12,8 @@ from swforge.generate import (
     build_assembly,
 )
 from swforge.session import SwError
+from swforge.spec import PartSpec
+from swforge.stack import AssemblySpec, Placement
 
 
 def make_spec(tolerance=0.01, kind="washer", name="washer_M8"):
@@ -237,6 +239,36 @@ def test_a_batch_that_loses_every_part_never_asks_for_an_assembly(monkeypatch):
     assert result.volume_error == float("inf")
     assert result.notes[-1] == "no part was built, so no assembly was created"
     assert not result.ok
+
+def test_an_assembly_with_nothing_placed_never_opens_a_document():
+    class ExplodingSession:
+        def new_assembly(self):
+            raise AssertionError("an assembly with nothing in it is not worth opening")
+
+    spec = AssemblySpec(
+        name="empty", parts={"w": PartSpec("washer", "w", {"size": "M8"})}
+    )
+    with pytest.raises(ValueError, match="has no placements"):
+        build_assembly(ExplodingSession(), spec)
+
+
+def test_a_part_that_no_placement_uses_is_rejected_before_the_batch(monkeypatch):
+    # build_assembly() walked spec.parts, so a declared part nothing inserts
+    # was written to disk and then dropped, and its parameters were never read.
+    def refuse(*args, **kwargs):
+        raise AssertionError("a part that no placement uses was built anyway")
+
+    monkeypatch.setattr("swforge.generate.generate", refuse)
+    spec = AssemblySpec(
+        name="spare",
+        parts={
+            "w": PartSpec("washer", "w", {"size": "M8"}),
+            "spare": PartSpec("washer", "spare", {"size": "M8"}),
+        },
+        placements=[Placement("w-1", "w")],
+    )
+    with pytest.raises(ValueError, match="part 'spare' is never placed"):
+        build_assembly(SimpleNamespace(), spec)
 
 
 def test_an_assembly_whose_parts_all_build_still_passes(monkeypatch):
