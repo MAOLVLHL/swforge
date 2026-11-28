@@ -442,6 +442,33 @@ def drawing_views(views: Sequence[str]) -> tuple[str, ...]:
     return wanted
 
 
+#: Suffixes draw() can open.  A .step is what the build *exports*; SolidWorks
+#: cannot hand it to CreateDrawViewFromModelView3, so a path with that suffix is
+#: an argument mistake rather than a file worth opening.
+MODEL_SUFFIXES = (".sldprt", ".sldasm")
+
+
+def model_file(path: str | Path) -> Path:
+    """Resolve *path* as a model draw() can open, or say why it cannot.
+
+    Checked before a document is opened, for the same reason drawing_views()
+    checks the orientation names first: a path that cannot be a drawing source
+    is an argument mistake, and COM's answer to it -- "cannot open ... (errors=0,
+    warnings=0)" -- names neither the typo nor the suffix that was wrong.
+    """
+    target = Path(path).resolve()
+    if not target.exists():
+        raise SpecError(f"model file not found: {target}")
+    if not target.is_file():
+        raise SpecError(f"model path is not a file: {target}")
+    if target.suffix.lower() not in MODEL_SUFFIXES:
+        raise SpecError(
+            f"model file {target} is not a .sldprt or .sldasm; "
+            "draw reads the model, not the .step the build exports"
+        )
+    return target
+
+
 def draw(
     session: Any,
     model_path: str | Path,
@@ -465,12 +492,14 @@ def draw(
     *views* is checked before any document is opened, so a misspelled
     orientation is reported as a bad argument rather than as a KeyError from
     several frames down, and an empty list is refused instead of producing a
-    sheet with nothing on it.
+    sheet with nothing on it.  The model path goes through the same gate: a
+    missing file, a directory, or an exported .step is answered before
+    SolidWorks is asked to open it.
     """
     from .drawing import VIEW_FRONT, VIEW_ISOMETRIC, VIEW_RIGHT, VIEW_TOP
 
     views = drawing_views(views)
-    target = Path(model_path).resolve()
+    target = model_file(model_path)
     doctype = 2 if target.suffix.lower() == ".sldasm" else 1
     model = session.open_document(target, doctype)
     files: dict[str, str] = {}
