@@ -358,3 +358,93 @@ def test_the_rollback_helpers_keep_quiet_when_the_file_system_refuses(tmp_path):
         "restoring without a backup, or with one that has already moved, must "
         "not touch the file that is there"
     )
+
+
+class _ScriptedApp:
+    """An application whose NewDocument answers with a scripted document."""
+
+    def __init__(self, active, created=None, template=r"C:\templates\default"):
+        self.active = active
+        self.created = created
+        self.template = template
+        self.asked: list[str] = []
+        self.closed: list[str] = []
+
+    def GetUserPreferenceStringValue(self, kind: int) -> str:
+        return self.template
+
+    def NewDocument(self, template: str, *args: object) -> object:
+        self.asked.append(str(template))
+        return self.created
+
+    @property
+    def ActiveDoc(self) -> object:
+        return self.active
+
+    def CloseDoc(self, what: str) -> None:
+        self.closed.append(what)
+
+
+@pytest.mark.parametrize('method, word', [
+    ('new_part', 'part'),
+    ('new_assembly', 'assembly'),
+    ('new_drawing', 'drawing'),
+])
+def test_a_refused_new_document_never_takes_over_the_open_one(
+    method, word, doc_factory
+):
+    path = f'C:\\out\\user_{word}.sld' + ('asm' if word == 'assembly' else 'prt')
+    user = doc_factory(title=f'user_{word}.SLDPRT', path=path)
+    app = _ScriptedApp(active=user, created=None)
+    with pytest.raises(session.SwError) as raised:
+        getattr(session.SwSession(app), method)()
+    assert f'refused to create a new {word}' in str(raised.value), (
+        'NewDocument answering None means the creation failed; the caller has '
+        f'to hear that. Got {raised.value!r} instead of a refusal.'
+    )
+    assert path in str(raised.value), (
+        'the refusal has to name the document it would otherwise have drawn '
+        f'into, or the user cannot tell which file was at risk. Got {raised.value!r}'
+    )
+    assert app.closed == [], (
+        f'a refused creation closed {app.closed!r}; the open document is not '
+        'the caller\'s to close'
+    )
+
+
+def test_a_refused_new_part_accepts_the_untitled_document_it_did_make(doc_factory):
+    fresh = doc_factory(title='\u96f6\u4ef61', path='')
+    app = _ScriptedApp(active=fresh, created=None)
+    model = session.SwSession(app).new_part()
+    assert model.model is fresh, (
+        'an untitled document has no path yet, so it may be the one that was '
+        'just made; it carries no user work either way, so it stays a valid '
+        'fallback'
+    )
+
+
+def test_a_created_document_wins_over_the_active_one(doc_factory):
+    fresh = doc_factory(title='\u96f6\u4ef61', path='')
+    user = doc_factory(title='user.SLDPRT', path=r'C:\out\user.sldprt')
+    app = _ScriptedApp(active=user, created=fresh)
+    model = session.SwSession(app).new_part()
+    assert model.model is fresh, (
+        'the document NewDocument answered with is the new one; falling back '
+        'to ActiveDoc even when a document was returned would draw on the '
+        f'user\'s part. Got {model.title!r}'
+    )
+
+
+def test_new_drawing_uses_the_template_it_was_given(doc_factory):
+    app = _ScriptedApp(active=None, created=doc_factory(title='\u56fe\u7eb81', path=''))
+    session.SwSession(app).new_drawing(template=r'C:\templates\a4.drwdot')
+    assert app.asked == [r'C:\templates\a4.drwdot'], (
+        'a caller that names a sheet template must get that one, not the '
+        f'default. Asked for {app.asked!r}'
+    )
+
+
+def test_a_refused_new_part_with_nothing_open_names_the_refusal(doc_factory):
+    app = _ScriptedApp(active=None, created=None)
+    with pytest.raises(session.SwError, match='refused to create a new part'):
+        session.SwSession(app).new_part()
